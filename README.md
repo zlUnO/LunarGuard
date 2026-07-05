@@ -1,6 +1,5 @@
 # LunarGuard
 
-Next-generation Lua 5.1 script obfuscation engine targeting GameSense, Neverlose, and CS:GO cheat scripts. Built with .NET 9 and Spectre.Console.
 
 ```
   _                                       ____                              _
