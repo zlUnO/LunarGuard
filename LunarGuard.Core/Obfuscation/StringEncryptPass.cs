@@ -9,7 +9,8 @@ public class StringEncryptPass : IObfuscationPass
 {
     public string Name => "String Encryption";
 
-    private static readonly Random _rng = new();
+    private readonly Random _rng = new();
+    private int _nameCounter;
 
     public void Transform(BlockStmt root, ObfuscationOptions options)
     {
@@ -26,7 +27,7 @@ public class StringEncryptPass : IObfuscationPass
         var injectBefore = new List<Statement>();
         foreach (var s in distinct)
         {
-            var varName = $"__s_{StableHash(s)}";
+            var varName = $"__s_{_nameCounter++}";
             stringMap[s] = varName;
             var enc = Encrypt(s, key);
             injectBefore.Add(MakeLocal(varName, enc, key));
@@ -36,24 +37,13 @@ public class StringEncryptPass : IObfuscationPass
         ReplaceStrings(root, stringMap);
     }
 
-    private static int StableHash(string s)
-    {
-        unchecked
-        {
-            var hash = 17;
-            foreach (var c in s)
-                hash = hash * 31 + c;
-            return hash < 0 ? -hash : hash;
-        }
-    }
-
-    private static string Keygen()
+    private string Keygen()
     {
         const string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
         return new string(Enumerable.Range(0, 8).Select(_ => chars[_rng.Next(chars.Length)]).ToArray());
     }
 
-    private static string Encrypt(string s, string key)
+    private string Encrypt(string s, string key)
     {
         var result = new StringBuilder();
         for (var i = 0; i < s.Length; i++)
@@ -61,7 +51,7 @@ public class StringEncryptPass : IObfuscationPass
         return result.ToString();
     }
 
-    private static Statement MakeLocal(string name, string encryptedValue, string key)
+    private Statement MakeLocal(string name, string encryptedValue, string key)
     {
         var loadStr = "local d,k=...;local s=''for i=1,#d do s=s..string.char(d[i]+k[(i-1)%#k+1])end return s";
 
@@ -88,13 +78,13 @@ public class StringEncryptPass : IObfuscationPass
         };
     }
 
-    private static void CollectStrings(BlockStmt block, Dictionary<string, string> stringMap)
+    private void CollectStrings(BlockStmt block, Dictionary<string, string> stringMap)
     {
         foreach (var stmt in block.Statements)
             CollectStringsStmt(stmt, stringMap);
     }
 
-    private static void CollectStringsStmt(Statement stmt, Dictionary<string, string> stringMap)
+    private void CollectStringsStmt(Statement stmt, Dictionary<string, string> stringMap)
     {
         switch (stmt)
         {
@@ -139,7 +129,7 @@ public class StringEncryptPass : IObfuscationPass
         }
     }
 
-    private static void CollectStringsExpr(Expression expr, Dictionary<string, string> stringMap)
+    private void CollectStringsExpr(Expression expr, Dictionary<string, string> stringMap)
     {
         switch (expr)
         {
@@ -175,13 +165,13 @@ public class StringEncryptPass : IObfuscationPass
         }
     }
 
-    private static void ReplaceStrings(BlockStmt block, Dictionary<string, string> stringMap)
+    private void ReplaceStrings(BlockStmt block, Dictionary<string, string> stringMap)
     {
         foreach (var stmt in block.Statements)
             ReplaceStringsStmt(stmt, stringMap);
     }
 
-    private static void ReplaceStringsStmt(Statement stmt, Dictionary<string, string> stringMap)
+    private void ReplaceStringsStmt(Statement stmt, Dictionary<string, string> stringMap)
     {
         switch (stmt)
         {
@@ -239,7 +229,7 @@ public class StringEncryptPass : IObfuscationPass
         }
     }
 
-    private static Expression ReplaceStringsExpr(Expression expr, Dictionary<string, string> stringMap)
+    private Expression ReplaceStringsExpr(Expression expr, Dictionary<string, string> stringMap)
     {
         switch (expr)
         {

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
@@ -276,7 +277,7 @@ public class LuaWriter : IAstVisitor
                 _sb.Append((bool)node.Value! ? "true" : "false");
                 break;
             case LiteralExpr.LiteralKind.Number:
-                _sb.Append(node.Value!.ToString()!.Replace(',', '.'));
+                _sb.Append(Convert.ToString(node.Value, CultureInfo.InvariantCulture));
                 break;
             case LiteralExpr.LiteralKind.String:
                 _sb.Append(EscapeString((string)node.Value!));
@@ -287,8 +288,16 @@ public class LuaWriter : IAstVisitor
     private static string EscapeString(string s)
     {
         var sb = new StringBuilder("\"");
-        foreach (var c in s)
+        for (var i = 0; i < s.Length; i++)
         {
+            var c = s[i];
+            if (char.IsSurrogate(c))
+            {
+                var cp = char.ConvertToUtf32(s, i);
+                sb.Append($"\\u{{{cp:x}}}");
+                i++;
+                continue;
+            }
             switch (c)
             {
                 case '"': sb.Append("\\\""); break;

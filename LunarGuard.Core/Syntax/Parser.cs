@@ -51,7 +51,7 @@ public class Parser
         {
             var label = Previous();
             if (Match(TokenType.DotDot)) return new List<Statement> { ParseLabelAfter(label) };
-            else { _current--; /* put back */ }
+            else if (_current > 0) { _current--; }
         }
 
         return ParsePrefixStatement();
@@ -428,7 +428,7 @@ public class Parser
         }
         else if (Match(TokenType.LBrace))
         {
-            _current--;
+            if (_current > 0) _current--;
             call.Arguments.Add(ParseTableConstructor());
         }
         else if (Match(TokenType.String))
@@ -457,8 +457,12 @@ public class Parser
         (TokenType.Caret, 7, true),
     };
 
-    private Expression ParseBinaryExpr(int minPrec)
+    private const int MaxUnaryDepth = 64;
+
+    private Expression ParseBinaryExpr(int minPrec, int unaryDepth = 0)
     {
+        if (unaryDepth > MaxUnaryDepth)
+            throw new ParseException(Peek(), "max unary operator depth exceeded");
         Expression left;
         if (Match(TokenType.Not) || Match(TokenType.Minus) || Match(TokenType.Hash))
         {
@@ -469,7 +473,7 @@ public class Parser
                 TokenType.Hash => UnaryOp.Length,
                 _ => throw new InvalidOperationException()
             };
-            var operand = ParseBinaryExpr(8);
+            var operand = ParseBinaryExpr(8, unaryDepth + 1);
             left = new UnaryExpr(op, operand) { Line = Previous().Line };
         }
         else

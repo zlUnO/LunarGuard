@@ -161,6 +161,9 @@ while pc <= #{codeName} do
         local val = pop(); local tbl = pop()
         tbl[#tbl + 1] = val
         push(tbl)
+    elseif op == 36 then -- inc
+        local idx = {codeName}[pc]; pc = pc + 1
+        regs[idx] = regs[idx] + 1
     end
 end";
 
@@ -184,6 +187,7 @@ end";
     {
         private readonly string _prefix;
         private readonly Random _rng;
+        private readonly HashSet<string> _locals = new();
 
         public VmGenerator(string prefix, Random rng)
         {
@@ -263,8 +267,12 @@ end";
 
         private void CompileBlock(BlockStmt block, List<object> bc)
         {
+            var savedLocals = new HashSet<string>(_locals);
             foreach (var stmt in block.Statements)
                 CompileStatement(stmt, bc);
+            _locals.Clear();
+            foreach (var l in savedLocals)
+                _locals.Add(l);
         }
 
         private void CompileStatement(Statement stmt, List<object> bc)
@@ -274,10 +282,24 @@ end";
                 case LocalVarStmt l:
                     for (var i = l.Values.Count - 1; i >= 0; i--)
                         CompileExpr(l.Values[i], bc);
-                    for (var i = 0; i < l.Names.Count; i++)
+                    if (l.Values.Count < l.Names.Count)
+                    {
+                        for (var i = l.Values.Count; i < l.Names.Count; i++)
+                            bc.Add(19L); // push nil for missing values
+                    }
+                    var assignCount = Math.Min(l.Names.Count, Math.Max(l.Values.Count, 1));
+                    for (var i = 0; i < assignCount; i++)
                     {
                         bc.Add(24L); bc.Add((long)i);
                     }
+                    if (l.Values.Count > l.Names.Count)
+                    {
+                        var extra = l.Values.Count - l.Names.Count;
+                        for (var i = 0; i < extra; i++)
+                            bc.Add(2L); // pop extra values
+                    }
+                    foreach (var name in l.Names)
+                        _locals.Add(name);
                     break;
                 case ReturnStmt r:
                     foreach (var v in r.Values)
@@ -289,16 +311,25 @@ end";
                     bc.Add(2L);
                     break;
                 case IfStmt i:
-                    foreach (var (cond, body) in i.Branches)
+                    var branchEndPatches = new List<int>();
+                    for (var j = 0; j < i.Branches.Count; j++)
                     {
+                        var (cond, body) = i.Branches[j];
                         CompileExpr(cond, bc);
                         var jmpzPatch = bc.Count;
-                        bc.Add(14L); bc.Add(0L); // jz placeholder
+                        bc.Add(14L); bc.Add(0L);
                         CompileBlock(body, bc);
+                        if (j < i.Branches.Count - 1 || i.ElseBody != null)
+                        {
+                            branchEndPatches.Add(bc.Count);
+                            bc.Add(13L); bc.Add(0L);
+                        }
                         bc[jmpzPatch + 1] = (long)bc.Count;
                     }
                     if (i.ElseBody != null)
                         CompileBlock(i.ElseBody, bc);
+                    foreach (var patch in branchEndPatches)
+                        bc[patch + 1] = (long)bc.Count;
                     break;
                 case WhileStmt w:
                     var loopStart = bc.Count;
@@ -310,22 +341,28 @@ end";
                     bc[exitPatch + 1] = (long)bc.Count;
                     break;
                 case ForNumericStmt fn:
+                    _locals.Add(fn.VarName);
                     CompileExpr(fn.Start, bc);
+                    bc.Add(24L); bc.Add(0L); // reg 0 = loop var
                     CompileExpr(fn.End, bc);
-                    bc.Add(24L); bc.Add(0L);
-                    bc.Add(24L); bc.Add(1L);
+                    bc.Add(24L); bc.Add(1L); // reg 1 = bound
+                    if (fn.Step != null)
+                    {
+                        CompileExpr(fn.Step, bc);
+                        bc.Add(24L); bc.Add(2L); // reg 2 = step
+                    }
                     var forLoopStart = bc.Count;
                     bc.Add(25L); bc.Add(0L);
                     bc.Add(25L); bc.Add(1L);
-                    bc.Add(12L); bc.Add(2L);
+                    bc.Add(30L); // leq: push(reg1 <= reg0) 
                     var forExit = bc.Count;
                     bc.Add(14L); bc.Add(0L);
                     CompileBlock(fn.Body, bc);
+                    bc.Add(36L); bc.Add(0L); // inc reg 0
                     bc.Add(13L); bc.Add((long)forLoopStart);
                     bc[forExit + 1] = (long)bc.Count;
                     break;
                 case AssignmentStmt a:
-                    // Compile targets first (tbl, key) for table access
                     foreach (var t in a.Targets)
                     {
                         if (t is IndexExpr ix)
@@ -340,16 +377,21 @@ end";
                             bc.Add(me.Member);
                         }
                     }
-                    // Then compile values
                     foreach (var v in a.Values)
                         CompileExpr(v, bc);
-                    // Then emit store operations (tbl, key, val already on stack)
                     foreach (var t in a.Targets)
                     {
                         if (t is VarExpr ve)
                         {
-                            bc.Add(22L);
-                            bc.Add(ve.Name);
+                            if (_locals.Contains(ve.Name))
+                            {
+                                bc.Add(24L); bc.Add(0L);
+                            }
+                            else
+                            {
+                                bc.Add(22L);
+                                bc.Add(ve.Name);
+                            }
                         }
                         else
                         {
@@ -419,11 +461,12 @@ end";
                 case UnaryExpr u:
                     if (u.Op == UnaryOp.Length)
                     { CompileExpr(u.Operand, bc); bc.Add(32L); }
-                    else
+                    else if (u.Op == UnaryOp.Negate)
+                    { CompileExpr(u.Operand, bc); bc.Add(33L); }
+                    else // Not
                     {
-                        if (u.Op != UnaryOp.Minus) bc.Add(18L); bc.Add(0L); // push false for not
                         CompileExpr(u.Operand, bc);
-                        bc.Add(u.Op == UnaryOp.Negate || u.Op == UnaryOp.Minus ? 33L : 34L);
+                        bc.Add(34L);
                     }
                     break;
                 case MemberExpr m:

@@ -154,6 +154,8 @@ public class Lexer
         if (_source[_start] == '0' && (Peek() == 'x' || Peek() == 'X'))
         {
             Advance();
+            if (!IsHexDigit(Peek()))
+                return Error("incomplete hex literal after '0x'");
             while (IsHexDigit(Peek())) Advance();
         }
         else
@@ -201,6 +203,8 @@ public class Lexer
                     case '\'': sb.Append('\''); break;
                     case '\n': _line++; break;
                     case 'x':
+                        if (IsAtEnd() || _current + 1 >= _source.Length)
+                        { sb.Append('\\'); break; }
                         var hex = "" + (char)Advance() + (char)Advance();
                         sb.Append((char)int.Parse(hex, NumberStyles.HexNumber));
                         break;

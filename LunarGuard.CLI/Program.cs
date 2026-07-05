@@ -109,6 +109,14 @@ public class ObfuscateCommand : Command<ObfuscateSettings>
             return 1;
         }
 
+        var fileInfo = new FileInfo(settings.Input);
+        const long maxSize = 10L * 1024 * 1024;
+        if (fileInfo.Length > maxSize)
+        {
+            AnsiConsole.MarkupLine($"[red]Input file too large ({fileInfo.Length:N0} bytes). Maximum allowed: 10 MiB.[/]");
+            return 1;
+        }
+
         var source = File.ReadAllText(settings.Input);
 
         AnsiConsole.Status()
@@ -175,7 +183,20 @@ public class ObfuscateCommand : Command<ObfuscateSettings>
             sw.Stop();
 
             var outputPath = settings.Output ?? Path.ChangeExtension(settings.Input, ".obfuscated.lua");
-            File.WriteAllText(outputPath, result);
+            var outputFull = Path.GetFullPath(outputPath);
+            var cwd = Path.GetFullPath(Environment.CurrentDirectory);
+            if (!outputFull.StartsWith(cwd, StringComparison.OrdinalIgnoreCase))
+            {
+                AnsiConsole.MarkupLine("[red]Output path must be within the current working directory.[/]");
+                return 1;
+            }
+            var outputDir = Path.GetDirectoryName(outputFull);
+            if (outputDir != null && !Directory.Exists(outputDir))
+            {
+                AnsiConsole.MarkupLine($"[red]Output directory does not exist: {outputDir}[/]");
+                return 1;
+            }
+            File.WriteAllText(outputFull, result);
 
             var resultTable = new Table()
                 .Border(TableBorder.Rounded)

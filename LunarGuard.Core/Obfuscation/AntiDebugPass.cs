@@ -41,20 +41,16 @@ public class AntiDebugPass : IObfuscationPass
                                 {
                                     Statements =
                                     {
-                                        new ReturnStmt
+                                new FunctionCallStmt
+                                {
+                                    Call = new FunctionCallExpr(new MemberExpr(new VarExpr("os"), "exit"))
+                                    {
+                                        Arguments =
                                         {
-                                            Values =
-                                            {
-                                                new FunctionCallExpr(new VarExpr("error"))
-                                                {
-                                                    Arguments =
-                                                    {
-                                                        new LiteralExpr(LiteralExpr.LiteralKind.String, "debugger detected"),
-                                                        new LiteralExpr(LiteralExpr.LiteralKind.Number, 0L)
-                                                    }
-                                                }
-                                            }
+                                            new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L)
                                         }
+                                    }
+                                }
                                     }
                                 }
                             )
@@ -98,20 +94,16 @@ public class AntiDebugPass : IObfuscationPass
                                 {
                                     Statements =
                                     {
-                                        new ReturnStmt
+                                new FunctionCallStmt
+                                {
+                                    Call = new FunctionCallExpr(new MemberExpr(new VarExpr("os"), "exit"))
+                                    {
+                                        Arguments =
                                         {
-                                            Values =
-                                            {
-                                                new FunctionCallExpr(new VarExpr("error"))
-                                                {
-                                                    Arguments =
-                                                    {
-                                                        new LiteralExpr(LiteralExpr.LiteralKind.String, "debugger detected"),
-                                                        new LiteralExpr(LiteralExpr.LiteralKind.Number, 0L)
-                                                    }
-                                                }
-                                            }
+                                            new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L)
                                         }
+                                    }
+                                }
                                     }
                                 }
                             )

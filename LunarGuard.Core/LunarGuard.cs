@@ -39,10 +39,19 @@ public class LunarGuardProcessor
 
     public string ProcessFile(string inputPath, string? outputPath = null, ObfuscationOptions? options = null)
     {
+        var fileInfo = new FileInfo(inputPath);
+        const long maxSize = 10L * 1024 * 1024;
+        if (fileInfo.Length > maxSize)
+            throw new InvalidOperationException($"Input file too large ({fileInfo.Length:N0} bytes). Maximum allowed: 10 MiB.");
+
         var source = File.ReadAllText(inputPath);
         var result = Process(source, options);
         outputPath ??= Path.ChangeExtension(inputPath, ".obfuscated.lua");
-        File.WriteAllText(outputPath, result);
-        return outputPath;
+        var outputFull = Path.GetFullPath(outputPath);
+        var cwd = Path.GetFullPath(Environment.CurrentDirectory);
+        if (!outputFull.StartsWith(cwd, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Output path must be within the current working directory.");
+        File.WriteAllText(outputFull, result);
+        return outputFull;
     }
 }
