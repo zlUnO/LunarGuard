@@ -1,0 +1,40 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.userprefs
+packages/
+*.nupkg
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Visual Studio
+.vs/
+*.csproj.user
+*.dbmdl
+*.jfm
+
+# Test output
+TestResults/
+*.trx
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+
+# Build output
+[Bb]uild/
+[Dd]ebug/
+[Rr]elease/
