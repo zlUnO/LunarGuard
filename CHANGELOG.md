@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.1.1] — 2026-07-06
+
+### Исправлено
+- **ExpressionSplitPass**: `InvalidCastException` при сплите `FunctionCallStmt.Call` — `SplitExpr` возвращал `VarExpr`, а код пытался кастануть в `FunctionCallExpr`
+- **StringEncryptPass**: 
+  - `load` → `loadstring` для Lua 5.1-совместимости (в Lua 5.1 `load` не принимает `(string, name)`)
+  - Полный разрыв encoder-decoder: XOR-кодировщик использовал `^ (key&0xFF)`, а декодер — `- key` со случайной операцией. Переписаны все 4 алгоритма: каждый encoder теперь генерирует точный inverse decoder
+  - `~` (XOR) → `+`/`-` для Lua 5.1-совместимости
+  - ScatterDecoders ставил декодеры ПОСЛЕ их первого использования → `nil` references. Все декодеры теперь вставляются в начало root-блока (после anti-debug)
+- **NumberEncodePass**: `EncodeNested` давал неверные результаты: `inner = |num|-mid` + `remainder = num-mid` = `num-2*mid` вместо `num`. Исправлено на `inner = mid`, `remainder = num-mid`
+- **VirtualizationPass**:
+  - `local vm_run = loadstring(...)` → глобальная `vm_run = loadstring(...)` (chunk из loadstring не видит enclosing locals)
+  - `v ~ key` (XOR дешифровка байткода) → `v + key` для Lua 5.1
+  - Два integrity XOR-а (`~`) → `-` для Lua 5.1
+  - `load(string, name)` → `loadstring(string, name)` для Lua 5.1
+
+### Технические детали
+- Все 53 теста проходят. 0 ошибок сборки, 0 предупреждений.
+- Non-VM обфускация (все проходы): 7 486 байт, Lua 5.1, корректно исполняется
+- VM-обфускация: 13 151 байт, проходит `loadstring`, но есть архитектурная проблема `VarExpr`/`GETG` vs `GETL` в `VmGenerator`
+
 ## [1.1.0] — 2026-07-06
 
 ### Добавлено

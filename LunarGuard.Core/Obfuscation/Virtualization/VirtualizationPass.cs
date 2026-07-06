@@ -126,7 +126,7 @@ local {keyName} = {xorKeyInt}
 for i = 1, #{codeName} do
     local v = {codeName}[i]
     if type(v) == 'number' and v == math.floor(v) and v >= 0 then
-        {codeName}[i] = v ~ {keyName}
+        {codeName}[i] = v + {keyName}
     end
 end
 
@@ -332,7 +332,7 @@ handlers[{opNames["DBG_CHECK"]}] = function()
     if dbg_flag then
         -- Soft-fail: corrupt the VM state subtly
         local idx = {codeName}[pc]; pc = pc + 1
-        {regsName}[idx] = ({regsName}[idx] or 0) ~ {dbgConst1}
+        {regsName}[idx] = ({regsName}[idx] or 0) - {dbgConst1}
     end
 end
 
@@ -341,7 +341,7 @@ handlers[{opNames["INTEG_CHECK"]}] = function()
     local actual = #{codeName}
     if actual ~= expected then
         -- Integrity failure: corrupt
-        {integName} = {integName} ~ actual
+        {integName} = {integName} - actual
     end
 end
 
@@ -361,12 +361,12 @@ while pc <= #{codeName} do
     end
 end";
 
-        return new LocalVarStmt
+        return new AssignmentStmt
         {
-            Names = { $"{prefix}_run" },
+            Targets = { new VarExpr($"{prefix}_run") },
             Values =
             {
-                new FunctionCallExpr(new VarExpr("load"))
+                new FunctionCallExpr(new VarExpr("loadstring"))
                 {
                     Arguments =
                     {
@@ -470,12 +470,12 @@ end";
                 injectedBytecode.Insert(pos, OpL("NOP"));
             }
 
-            // Encrypt bytecode (XOR all numeric values)
+            // Encrypt bytecode (add offset for Lua 5.1 compatibility)
             var encrypted = new List<object>();
             foreach (var instr in injectedBytecode)
             {
                 if (instr is long l)
-                    encrypted.Add(l ^ _xorKey);
+                    encrypted.Add(l - _xorKey);
                 else
                     encrypted.Add(instr);
             }
@@ -503,7 +503,7 @@ end";
             var vmRunName = $"{_prefix}_run";
             var funcName = funcDecl.Name ?? $"vm_{NextHex(_rng, 8)}";
             var vmCall = new FunctionCallExpr(
-                new FunctionCallExpr(new VarExpr("load"))
+                new FunctionCallExpr(new VarExpr("loadstring"))
                 {
                     Arguments =
                     {
@@ -661,6 +661,10 @@ end";
                         bc.Add(OpL("SETL")); bc.Add((long)i);
                     }
                     CompileBlock(fg.Body, bc);
+                    break;
+
+                case DoStmt d:
+                    CompileBlock(d.Body, bc);
                     break;
 
                 case AssignmentStmt a:

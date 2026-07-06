@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
 using LunarGuard.Core.AST.Expr;
@@ -12,7 +13,9 @@ public class NumberEncodePass : IObfuscationPass
     {
         if (!options.EncodeNumbers) return;
 
-        var rng = new Random();
+        var seedBytes = new byte[4];
+        RandomNumberGenerator.Fill(seedBytes);
+        var rng = new Random(BitConverter.ToInt32(seedBytes, 0) & 0x7FFFFFFF);
         ProcessBlock(root, rng);
     }
 
@@ -165,11 +168,11 @@ public class NumberEncodePass : IObfuscationPass
 
     private static Expression EncodeNested(double num, Random rng)
     {
-        var mid = rng.Next(1, Math.Max(2, (int)Math.Ceiling(Math.Min(Math.Abs(num), 1000))));
-        var inner = EncodeAddSub(mid > num ? mid + Math.Abs(num) : Math.Abs(num) - mid, rng);
-        if (num >= 0)
-            return new BinaryExpr(BinaryOp.Add, inner, MakeLiteral(num - mid));
-        return new BinaryExpr(BinaryOp.Subtract, MakeLiteral(0), inner);
+        var absNum = Math.Abs(num);
+        var maxMid = Math.Max(1, (int)Math.Floor(Math.Min(absNum, 1000)));
+        var mid = maxMid > 0 ? rng.Next(1, maxMid + 1) : 1;
+        var inner = EncodeAddSub(mid, rng);
+        return new BinaryExpr(BinaryOp.Add, inner, MakeLiteral(num - mid));
     }
 
     private static LiteralExpr MakeLiteral(double val)

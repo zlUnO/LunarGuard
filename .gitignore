@@ -38,3 +38,7 @@ Thumbs.db
 [Bb]uild/
 [Dd]ebug/
 [Rr]elease/
+
+publish/
+*.zip
+test_script*
