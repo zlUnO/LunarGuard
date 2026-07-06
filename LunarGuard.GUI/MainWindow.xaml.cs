@@ -219,7 +219,7 @@ public partial class MainWindow : Window
 
     private static string ComputeLocalHash()
     {
-        var path = Assembly.GetExecutingAssembly().Location;
+        var path = Environment.ProcessPath!;
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLower();
     }
