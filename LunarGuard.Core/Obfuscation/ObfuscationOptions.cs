@@ -13,5 +13,5 @@ public class ObfuscationOptions
 
     public string StringKey { get; set; } = "lx9zq4k7";
     public int DeadCodeBlocks { get; set; } = 5;
-    public bool StripComments { get; set; } = true;
+    public string RenamePrefix { get; set; } = "";
 }

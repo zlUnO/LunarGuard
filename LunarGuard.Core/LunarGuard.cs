@@ -49,7 +49,8 @@ public class LunarGuardProcessor
         outputPath ??= Path.ChangeExtension(inputPath, ".obfuscated.lua");
         var outputFull = Path.GetFullPath(outputPath);
         var cwd = Path.GetFullPath(Environment.CurrentDirectory);
-        if (!outputFull.StartsWith(cwd, StringComparison.OrdinalIgnoreCase))
+        if (!outputFull.StartsWith(cwd + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(outputFull, cwd, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Output path must be within the current working directory.");
         File.WriteAllText(outputFull, result);
         return outputFull;

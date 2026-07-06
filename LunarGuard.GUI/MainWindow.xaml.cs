@@ -1,0 +1,307 @@
+using System.IO;
+using System.Net.Http;
+using System.Reflection;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using LunarGuard.Core;
+using LunarGuard.Core.Obfuscation;
+using Microsoft.Win32;
+
+namespace LunarGuard.GUI;
+
+public partial class MainWindow : Window
+{
+    private string? _selectedFilePath;
+    private bool _isProcessing;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+
+        TabHome.Checked += Tab_Checked;
+        TabFaq.Checked += Tab_Checked;
+        ChkRename.Checked += Setting_Changed;
+        ChkRename.Unchecked += Setting_Changed;
+        ChkEncrypt.Checked += Setting_Changed;
+        ChkEncrypt.Unchecked += Setting_Changed;
+        ChkDeadCode.Checked += Setting_Changed;
+        ChkDeadCode.Unchecked += Setting_Changed;
+
+        Setting_Changed(this, new RoutedEventArgs());
+    }
+
+    private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void Maximize_Click(object sender, RoutedEventArgs e) =>
+        WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    protected override void OnMouseLeftButtonDown(MouseButtonEventArgs e)
+    {
+        base.OnMouseLeftButtonDown(e);
+        if (e.GetPosition(this).Y < 50)
+            DragMove();
+    }
+
+    private void Tab_Checked(object sender, RoutedEventArgs e)
+    {
+        if (HomePanel is null) return;
+
+        var isHome = TabHome.IsChecked == true;
+        HomePanel.Visibility = isHome ? Visibility.Visible : Visibility.Collapsed;
+        FaqPanel.Visibility = isHome ? Visibility.Collapsed : Visibility.Visible;
+        PageTitle.Text = isHome ? "Главная" : "FAQ — настройки обфускации";
+    }
+
+    private void BrowseFile_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Lua files (*.lua)|*.lua|All files (*.*)|*.*",
+            Title = "Выберите .lua файл для обработки"
+        };
+        if (dialog.ShowDialog() == true)
+            SelectFile(dialog.FileName);
+    }
+
+    private void SelectFile(string path)
+    {
+        _selectedFilePath = path;
+        var name = Path.GetFileName(path);
+        var info = new FileInfo(path);
+        var size = info.Length switch
+        {
+            < 1024 => $"{info.Length} Б",
+            < 1024 * 1024 => $"{info.Length / 1024.0:F1} КБ",
+            _ => $"{info.Length / (1024.0 * 1024.0):F1} МБ"
+        };
+        FilePathText.Text = name;
+        FileSizeText.Text = $"{size} | {Path.GetDirectoryName(Path.GetFullPath(path))}";
+        FilePathText.Foreground = (Brush)new BrushConverter().ConvertFrom("#E2F0FD")!;
+
+        // Auto-set output path
+        var dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
+        var outName = $"{Path.GetFileNameWithoutExtension(path)}.obfuscated.lua";
+        OutputPathText.Text = Path.Combine(dir, outName);
+        OutputPathText.Foreground = (Brush)new BrushConverter().ConvertFrom("#E2F0FD")!;
+
+        SettingsPanel.IsEnabled = true;
+        RunBtn.IsEnabled = true;
+    }
+
+    private void Setting_Changed(object sender, RoutedEventArgs e)
+    {
+        RenamePrefixRow.Visibility = ChkRename.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        StringKeyRow.Visibility = ChkEncrypt.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+        DeadCodeRow.Visibility = ChkDeadCode.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private async void Run_Click(object sender, RoutedEventArgs e)
+    {
+        if (_isProcessing || _selectedFilePath is null) return;
+
+        _isProcessing = true;
+        RunBtn.IsEnabled = false;
+        BrowseBtn.IsEnabled = false;
+
+        var options = new ObfuscationOptions
+        {
+            RenameVariables = ChkRename.IsChecked == true,
+            RenamePrefix = TxtRenamePrefix.Text.Trim(),
+            EncryptStrings = ChkEncrypt.IsChecked == true,
+            StringKey = TxtStringKey.Text.Trim(),
+            EncodeNumbers = ChkEncodeNumbers.IsChecked == true,
+            InjectDeadCode = ChkDeadCode.IsChecked == true,
+            DeadCodeBlocks = int.TryParse(TxtDeadCodeBlocks.Text, out var d) ? d : 5,
+            ObfuscateControlFlow = ChkControlFlow.IsChecked == true,
+            SplitExpressions = ChkSplitExpr.IsChecked == true,
+            AntiDebug = ChkAntiDebug.IsChecked == true,
+            Virtualize = ChkVirtualize.IsChecked == true,
+
+        };
+
+        ShowProgress($"Обработка {Path.GetFileName(_selectedFilePath)}...", 0);
+
+        try
+        {
+            // Read source directly — bypass ProcessFile() CWD restriction
+            var source = await File.ReadAllTextAsync(_selectedFilePath);
+
+            var result = await Task.Run(() =>
+            {
+                var processor = new LunarGuardProcessor();
+                return processor.Process(source, options);
+            });
+
+            // Write output next to the input file
+            var dir = Path.GetDirectoryName(Path.GetFullPath(_selectedFilePath))!;
+            var outName = $"{Path.GetFileNameWithoutExtension(_selectedFilePath)}.obfuscated.lua";
+            var outputPath = Path.Combine(dir, outName);
+
+            await File.WriteAllTextAsync(outputPath, result);
+
+            ShowProgress("Готово!", 100);
+
+            var msg = $"Файл успешно обработан!\n\nСохранено:\n{outputPath}";
+            MessageBox.Show(msg, "LunarGuard", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ShowProgress($"Ошибка: {ex.Message}", 0);
+            MessageBox.Show($"Ошибка обработки:\n{ex.Message}", "LunarGuard",
+                            MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _isProcessing = false;
+            RunBtn.IsEnabled = _selectedFilePath is not null;
+            BrowseBtn.IsEnabled = true;
+
+            await Task.Delay(1500);
+            HideProgress();
+        }
+    }
+
+    private object? _updateBtnOriginal;
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        _updateBtnOriginal ??= UpdateBtn.Content;
+        UpdateBtn.IsEnabled = false;
+
+        try
+        {
+            UpdateBtn.Content = "Хеширование...";
+            var localHash = ComputeLocalHash();
+
+            UpdateBtn.Content = "Загрузка с GitHub...";
+            (var remoteHash, var latestVersion, var downloadUrl) = await FetchLatestReleaseAsync();
+
+            if (remoteHash.Length > 0 && localHash == remoteHash)
+            {
+                MessageBox.Show("Установлена последняя версия LunarGuard.",
+                                "Обновлений нет", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                var msg = remoteHash.Length == 0
+                    ? $"Доступна новая версия: {latestVersion}\n\nХотите перейти на страницу загрузки?"
+                    : $"Доступна новая версия: {latestVersion}\n\nХеш отличается от текущей.\nХотите перейти на страницу загрузки?";
+                var result = MessageBox.Show(msg, "Обновление найдено",
+                    MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (result == MessageBoxResult.Yes)
+                    System.Diagnostics.Process.Start(
+                        new System.Diagnostics.ProcessStartInfo
+                        {
+                            FileName = downloadUrl,
+                            UseShellExecute = true
+                        });
+            }
+        }
+        catch (HttpRequestException)
+        {
+            MessageBox.Show("Не удалось проверить обновления.\nПроверьте подключение к интернету.",
+                            "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Ошибка проверки обновлений:\n{ex.Message}",
+                            "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            UpdateBtn.IsEnabled = true;
+            UpdateBtn.Content = _updateBtnOriginal;
+        }
+    }
+
+    private static string ComputeLocalHash()
+    {
+        var path = Assembly.GetExecutingAssembly().Location;
+        using var stream = File.OpenRead(path);
+        return Convert.ToHexString(SHA256.HashData(stream)).ToLower();
+    }
+
+    private static async Task<(string Hash, string Version, string DownloadUrl)> FetchLatestReleaseAsync()
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("LunarGuard/2.0.0");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/json");
+
+        var json = await client.GetStringAsync(
+            "https://api.github.com/repos/zlUnO/LunarGuard/releases/latest");
+
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var tagName = root.GetProperty("tag_name").GetString()
+            ?? throw new InvalidOperationException("Не удалось прочитать информацию о версии.");
+        var version = tagName.TrimStart('v');
+
+        var downloadUrl = "https://github.com/zlUnO/LunarGuard/releases";
+        if (root.TryGetProperty("assets", out var assets) && assets.GetArrayLength() > 0)
+        {
+            var url = assets[0].GetProperty("browser_download_url").GetString();
+            if (!string.IsNullOrEmpty(url))
+                downloadUrl = url;
+        }
+
+        return await DownloadAndHashAsync(client, downloadUrl, version);
+    }
+
+    private static async Task<(string Hash, string Version, string DownloadUrl)> DownloadAndHashAsync(
+        HttpClient client, string downloadUrl, string version)
+    {
+        const long maxDownloadSize = 100L * 1024 * 1024;
+
+        using var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+        response.EnsureSuccessStatusCode();
+
+        var contentLength = response.Content.Headers.ContentLength;
+        if (contentLength > maxDownloadSize)
+            throw new InvalidOperationException(
+                $"Release file too large ({contentLength:N0} bytes). Maximum allowed: 100 MiB.");
+
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            await using var fs = File.Create(tempFile);
+            await response.Content.CopyToAsync(fs);
+
+            await using var stream = File.OpenRead(tempFile);
+            var hash = Convert.ToHexString(SHA256.HashData(stream)).ToLower();
+            return (hash, version, downloadUrl);
+        }
+        finally
+        {
+            try { File.Delete(tempFile); } catch { }
+        }
+    }
+
+    private void ShowProgress(string status, int percent)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            ProgressPanel.Visibility = Visibility.Visible;
+            ProgressStatusText.Text = status;
+            ProgressPercentText.Text = $"{percent}%";
+
+            var parent = ProgressFill.Parent as FrameworkElement;
+            var parentWidth = parent?.ActualWidth ?? 400;
+            ProgressFill.Width = parentWidth * percent / 100;
+        });
+    }
+
+    private void HideProgress()
+    {
+        Dispatcher.Invoke(() =>
+        {
+            ProgressPanel.Visibility = Visibility.Collapsed;
+            ProgressFill.Width = 0;
+        });
+    }
+}

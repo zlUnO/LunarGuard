@@ -126,7 +126,7 @@ public class ObfuscationPassTests
 
         var code = Write(root);
         Assert.DoesNotContain("\"hello\"", code);
-        Assert.Contains("__s_", code);
+        Assert.Contains("__se_", code);
     }
 
     [Fact]
@@ -141,7 +141,7 @@ public class ObfuscationPassTests
         var code = Write(root);
         Assert.DoesNotContain("\"key\"", code);
         Assert.DoesNotContain("\"value\"", code);
-        Assert.Contains("__s_", code);
+        Assert.Contains("__se_", code);
     }
 
     [Fact]
@@ -156,7 +156,7 @@ public class ObfuscationPassTests
         var code = Write(root);
         Assert.DoesNotContain("\"hello\"", code);
         Assert.DoesNotContain("\"world\"", code);
-        Assert.Contains("__s_", code);
+        Assert.Contains("__se_", code);
     }
 
     [Fact]
@@ -170,7 +170,7 @@ public class ObfuscationPassTests
 
         var code = Write(root);
         Assert.DoesNotContain("\"hello world\"", code);
-        Assert.Contains("__s_", code);
+        Assert.Contains("__se_", code);
     }
 
     [Fact]

@@ -9,6 +9,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LunarGuard.CLI", "LunarGuar
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LunarGuard.Tests", "LunarGuard.Tests\LunarGuard.Tests.csproj", "{8FB66C88-535D-4E1D-B60D-9CAAC187A01D}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "LunarGuard.GUI", "LunarGuard.GUI\LunarGuard.GUI.csproj", "{831C837A-73A7-43AA-AF72-7740D63C51FE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -55,6 +57,18 @@ Global
 		{8FB66C88-535D-4E1D-B60D-9CAAC187A01D}.Release|x64.Build.0 = Release|Any CPU
 		{8FB66C88-535D-4E1D-B60D-9CAAC187A01D}.Release|x86.ActiveCfg = Release|Any CPU
 		{8FB66C88-535D-4E1D-B60D-9CAAC187A01D}.Release|x86.Build.0 = Release|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Debug|x64.Build.0 = Debug|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Debug|x86.Build.0 = Debug|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Release|Any CPU.Build.0 = Release|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Release|x64.ActiveCfg = Release|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Release|x64.Build.0 = Release|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Release|x86.ActiveCfg = Release|Any CPU
+		{831C837A-73A7-43AA-AF72-7740D63C51FE}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

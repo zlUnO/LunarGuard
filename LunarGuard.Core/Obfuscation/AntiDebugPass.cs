@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
 using LunarGuard.Core.AST.Expr;
@@ -12,104 +13,80 @@ public class AntiDebugPass : IObfuscationPass
     {
         if (!options.AntiDebug) return;
 
-        root.Statements.Insert(0, CreateDebugCheck());
-        root.Statements.Insert(0, CreateDetourCheck());
+        using var rng = RandomNumberGenerator.Create();
+
+        // Scatter multiple small anti-debug checks throughout the code
+        // These are in addition to what's integrated into the VM
+        var checkPoints = FindCheckPoints(root, 3);
+        foreach (var idx in checkPoints)
+        {
+            root.Statements.Insert(idx, CreateAntiDebugChunk(rng));
+        }
+
+        // Also add one at the very beginning
+        root.Statements.Insert(0, CreateAntiDebugChunk(rng));
     }
 
-    private static Statement CreateDetourCheck()
+    private static List<int> FindCheckPoints(BlockStmt root, int count)
     {
-        var cond1 = new BinaryExpr(BinaryOp.Eq,
+        var points = new List<int>();
+        for (var i = 0; i < root.Statements.Count; i++)
+        {
+            var s = root.Statements[i];
+            if (s is FunctionDeclStmt) continue;
+            if (s is LocalVarStmt lv && lv.Names.Count == 1 && lv.Names[0].Contains("_run")) continue;
+            points.Add(i);
+        }
+        if (points.Count == 0) points.Add(0);
+
+        var result = new List<int>();
+        using var rng = RandomNumberGenerator.Create();
+        for (var i = 0; i < count && points.Count > 0; i++)
+        {
+            var buf = new byte[4];
+            rng.GetBytes(buf);
+            var idx = buf[0] % points.Count;
+            result.Add(points[idx]);
+            points.RemoveAt(idx);
+        }
+        return result;
+    }
+
+    private static Statement CreateAntiDebugChunk(RandomNumberGenerator rng)
+    {
+        var buf = new byte[8];
+        rng.GetBytes(buf);
+        var falseTarget = BitConverter.ToInt32(buf, 0) & 0x7FFFFFFF;
+        var branchVar = $"_{BitConverter.ToInt32(buf, 4):x8}";
+
+        // debug.getinfo(0) == nil -> debug is hooked -> os.exit(1)
+        var cond = new BinaryExpr(BinaryOp.Eq,
             new FunctionCallExpr(new MemberExpr(new VarExpr("debug"), "getinfo"))
             {
                 Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, 0L) }
             },
             new LiteralExpr(LiteralExpr.LiteralKind.Nil, null));
 
-        return new DoStmt
+        return new IfStmt
         {
-            Body = new BlockStmt
+            Branches =
             {
-                Statements =
-                {
-                    new IfStmt
+                (
+                    cond,
+                    new BlockStmt
                     {
-                        Branches =
+                        Statements =
                         {
-                            (
-                                cond1,
-                                new BlockStmt
+                            new FunctionCallStmt
+                            {
+                                Call = new FunctionCallExpr(new MemberExpr(new VarExpr("os"), "exit"))
                                 {
-                                    Statements =
-                                    {
-                                new FunctionCallStmt
-                                {
-                                    Call = new FunctionCallExpr(new MemberExpr(new VarExpr("os"), "exit"))
-                                    {
-                                        Arguments =
-                                        {
-                                            new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L)
-                                        }
-                                    }
+                                    Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L) }
                                 }
-                                    }
-                                }
-                            )
+                            }
                         }
                     }
-                }
-            }
-        };
-    }
-
-    private static Statement CreateDebugCheck()
-    {
-        var dbgExists = new BinaryExpr(BinaryOp.Neq,
-            new VarExpr("debug"), new LiteralExpr(LiteralExpr.LiteralKind.Nil, null));
-        var getinfoExists = new BinaryExpr(BinaryOp.And, dbgExists,
-            new BinaryExpr(BinaryOp.Neq,
-                new MemberExpr(new VarExpr("debug"), "getinfo"),
-                new LiteralExpr(LiteralExpr.LiteralKind.Nil, null)));
-        var tracebackExists = new BinaryExpr(BinaryOp.And, getinfoExists,
-            new BinaryExpr(BinaryOp.Neq,
-                new MemberExpr(new VarExpr("debug"), "traceback"),
-                new LiteralExpr(LiteralExpr.LiteralKind.Nil, null)));
-        var getregistryExists = new BinaryExpr(BinaryOp.And, tracebackExists,
-            new BinaryExpr(BinaryOp.Neq,
-                new MemberExpr(new VarExpr("debug"), "getregistry"),
-                new LiteralExpr(LiteralExpr.LiteralKind.Nil, null)));
-
-        return new DoStmt
-        {
-            Body = new BlockStmt
-            {
-                Statements =
-                {
-                    new IfStmt
-                    {
-                        Branches =
-                        {
-                            (
-                                getregistryExists,
-                                new BlockStmt
-                                {
-                                    Statements =
-                                    {
-                                new FunctionCallStmt
-                                {
-                                    Call = new FunctionCallExpr(new MemberExpr(new VarExpr("os"), "exit"))
-                                    {
-                                        Arguments =
-                                        {
-                                            new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L)
-                                        }
-                                    }
-                                }
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
+                )
             }
         };
     }

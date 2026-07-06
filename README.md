@@ -1,7 +1,6 @@
 # LunarGuard
 
-Next-generation Lua 5.1 script obfuscation engine targeting GameSense, Neverlose, and CS:GO cheat scripts. Built with .NET 9 and Spectre.Console.
-
+The project was made entirely with the help of AI
 ```
   _                                       ____                              _
  | |      _   _   _ __     __ _   _ __   / ___|  _   _    __ _   _ __    __| |
@@ -9,6 +8,10 @@ Next-generation Lua 5.1 script obfuscation engine targeting GameSense, Neverlose
  | |___  | |_| | | | | | | (_| | | |    | |_| | | |_| | | (_| | | |    | (_| |
  |_____|  \__,_| |_| |_|  \__,_| |_|     \____|  \__,_|  \__,_| |_|     \__,_|
 ```
+
+## Changelog
+
+Полный список изменений — в [CHANGELOG.md](CHANGELOG.md).
 
 ## Features
 
@@ -38,8 +41,16 @@ dotnet build
 
 ## Usage
 
+### CLI
+
 ```bash
 dotnet run --project LunarGuard.CLI -- obfuscate <script.lua> [options]
+```
+
+### GUI (Windows)
+
+```bash
+dotnet run --project LunarGuard.GUI
 ```
 
 ### Examples
@@ -112,6 +123,7 @@ LunarGuard/
 │   ├── Obfuscation/        # Obfuscation passes
 │   │   └── Virtualization/ # Bytecode VM compiler + interpreter
 │   └── Syntax/             # Lexer + parser
+├── LunarGuard.GUI/         # WPF desktop interface (Windows)
 └── LunarGuard.Tests/       # xUnit tests
 ```
 

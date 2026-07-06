@@ -185,7 +185,8 @@ public class ObfuscateCommand : Command<ObfuscateSettings>
             var outputPath = settings.Output ?? Path.ChangeExtension(settings.Input, ".obfuscated.lua");
             var outputFull = Path.GetFullPath(outputPath);
             var cwd = Path.GetFullPath(Environment.CurrentDirectory);
-            if (!outputFull.StartsWith(cwd, StringComparison.OrdinalIgnoreCase))
+            if (!outputFull.StartsWith(cwd + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                && !string.Equals(outputFull, cwd, StringComparison.OrdinalIgnoreCase))
             {
                 AnsiConsole.MarkupLine("[red]Output path must be within the current working directory.[/]");
                 return 1;

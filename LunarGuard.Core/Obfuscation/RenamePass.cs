@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
 using LunarGuard.Core.AST.Expr;
@@ -8,7 +10,8 @@ public class RenamePass : IObfuscationPass
 {
     public string Name => "Rename Variables";
 
-    private static readonly string[] Reserved = {
+    private static readonly HashSet<string> Reserved = new()
+    {
         "and", "break", "do", "else", "elseif", "end", "false", "for",
         "function", "if", "in", "local", "nil", "not", "or", "repeat",
         "return", "then", "true", "until", "while", "goto",
@@ -20,45 +23,44 @@ public class RenamePass : IObfuscationPass
         "coroutine", "utf8"
     };
 
+    private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
+    private readonly string _buildPrefix;
+
+    public RenamePass()
+    {
+        // Unique per-instance (per-build) 32-char prefix
+        var buf = new byte[16];
+        _rng.GetBytes(buf);
+        _buildPrefix = "_" + Convert.ToHexString(buf).ToLower();
+    }
+
     public void Transform(BlockStmt root, ObfuscationOptions options)
     {
         if (!options.RenameVariables) return;
 
         var renames = new Dictionary<string, string>();
-        var renameQueue = new Queue<string>();
         var usedNames = new HashSet<string>(Reserved);
-
-        long _counter = 0;
+        var counter = 0L;
+        var prefix = string.IsNullOrEmpty(options.RenamePrefix) ? _buildPrefix : options.RenamePrefix;
 
         string NextName()
         {
-            while (renameQueue.Count == 0)
+            while (true)
             {
-                var b = GenerateBase(_counter++);
-                renameQueue.Enqueue($"_{b}");
-                renameQueue.Enqueue($"__{b}");
-                renameQueue.Enqueue($"_{b}_");
+                var name = $"{prefix}_{counter++}";
+                if (usedNames.Add(name))
+                    return name;
             }
-            var name = renameQueue.Dequeue();
-            if (usedNames.Add(name))
-                return name;
-            return NextName();
         }
 
         var walker = new RenameWalker(renames, NextName);
         walker.VisitBlock(root);
     }
 
-    private static string GenerateBase(long seed)
-    {
-        return Convert.ToHexString(BitConverter.GetBytes(seed ^ 0xDEADBEEF)).ToLower();
-    }
-
     private class RenameWalker
     {
         private readonly Dictionary<string, string> _renames;
         private readonly Func<string> _nextName;
-        private readonly HashSet<string> _globals = new();
         private readonly HashSet<string> _locals = new();
         private readonly Stack<HashSet<string>> _localScopes = new();
 
@@ -103,14 +105,14 @@ public class RenamePass : IObfuscationPass
                         if (!_renames.ContainsKey(f.Name))
                             _renames[f.Name] = _nextName();
                         _localScopes.Peek().Add(f.Name);
+                        f.Name = _renames[f.Name];
                     }
-                    else if (!f.IsMethod && f.Name != null && !IsGlobal(f.Name))
+                    else if (!f.IsMethod && f.Name != null && !char.IsUpper(f.Name[0]))
                     {
                         if (!_renames.ContainsKey(f.Name))
                             _renames[f.Name] = _nextName();
+                        f.Name = _renames[f.Name];
                     }
-                    if (!f.IsMethod && f.Name != null && _renames.TryGetValue(f.Name, out var newName))
-                        f.Name = newName;
                     if (f.NamePrefix != null && f.NamePrefix.Count > 0)
                     {
                         for (var i = 0; i < f.NamePrefix.Count; i++)
@@ -231,8 +233,5 @@ public class RenamePass : IObfuscationPass
                 case VarargsExpr: break;
             }
         }
-
-        private static bool IsGlobal(string name) =>
-            name.Length > 0 && char.IsUpper(name[0]);
     }
 }

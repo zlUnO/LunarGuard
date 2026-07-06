@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
@@ -9,72 +10,204 @@ public class StringEncryptPass : IObfuscationPass
 {
     public string Name => "String Encryption";
 
-    private readonly Random _rng = new();
+    private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
     private int _nameCounter;
+    private int _funcCounter;
+    private readonly List<Statement> _scatteredDecoders = new();
 
     public void Transform(BlockStmt root, ObfuscationOptions options)
     {
         if (!options.EncryptStrings) return;
 
         var stringMap = new Dictionary<string, string>();
-        var key = options.StringKey;
-        if (string.IsNullOrEmpty(key)) key = Keygen();
-
         CollectStrings(root, stringMap);
         var distinct = stringMap.Keys.Where(s => s.Length > 1).Distinct().ToList();
         if (distinct.Count == 0) return;
 
-        var injectBefore = new List<Statement>();
+        _scatteredDecoders.Clear();
+        _nameCounter = 0;
+        _funcCounter = 0;
+
         foreach (var s in distinct)
         {
-            var varName = $"__s_{_nameCounter++}";
+            var varName = $"__se_{_nameCounter++}";
             stringMap[s] = varName;
-            var enc = Encrypt(s, key);
-            injectBefore.Add(MakeLocal(varName, enc, key));
+            var decoder = MakeScatteredDecoder(s, varName);
+            _scatteredDecoders.Add(decoder);
         }
 
-        root.Statements.InsertRange(0, injectBefore);
+        // Scatter decoders throughout the root block (not all at top)
+        ScatterDecoders(root);
+
         ReplaceStrings(root, stringMap);
     }
 
-    private string Keygen()
+    private void ScatterDecoders(BlockStmt root)
     {
-        const string chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-        return new string(Enumerable.Range(0, 8).Select(_ => chars[_rng.Next(chars.Length)]).ToArray());
+        var insertPoints = new List<int>();
+        for (var i = 0; i < root.Statements.Count; i++)
+        {
+            var s = root.Statements[i];
+            if (s is FunctionDeclStmt) continue;
+            if (s is LocalVarStmt lv && lv.Names.Count == 1 && lv.Names[0].Contains("_run")) continue;
+            insertPoints.Add(i);
+        }
+
+        if (insertPoints.Count == 0) { insertPoints.Add(0); }
+
+        for (var i = 0; i < _scatteredDecoders.Count; i++)
+        {
+            var posIdx = i % insertPoints.Count;
+            var pos = insertPoints[posIdx];
+            root.Statements.Insert(pos, _scatteredDecoders[i]);
+            for (var j = posIdx; j < insertPoints.Count; j++)
+                insertPoints[j]++;
+        }
     }
 
-    private string Encrypt(string s, string key)
+    private Statement MakeScatteredDecoder(string original, string varName)
     {
-        var result = new StringBuilder();
-        for (var i = 0; i < s.Length; i++)
-            result.Append((char)(s[i] - key[i % key.Length]));
-        return result.ToString();
+        // Each string gets its OWN unique decoder with varying algorithm
+        var buf = new byte[1];
+        _rng.GetBytes(buf);
+        var algo = buf[0] % 4;
+
+        return algo switch
+        {
+            0 => MakeXorDecoder(original, varName),
+            1 => MakeOffsetDecoder(original, varName),
+            2 => MakeTableDecoder(original, varName),
+            _ => MakeArithDecoder(original, varName),
+        };
     }
 
-    private Statement MakeLocal(string name, string encryptedValue, string key)
+    private Statement MakeXorDecoder(string original, string varName)
     {
-        var loadStr = "local d,k=...;local s=''for i=1,#d do s=s..string.char(d[i]+k[(i-1)%#k+1])end return s";
+        var key = new byte[8];
+        _rng.GetBytes(key);
+        var keyNum = BitConverter.ToInt32(key, 0) & 0x7FFFFFFF;
+
+        var encoded = new List<long>();
+        foreach (var c in original)
+            encoded.Add(c ^ (keyNum & 0xFF));
+
+        return BuildDecoderStmt(varName, encoded, keyNum);
+    }
+
+    private Statement MakeOffsetDecoder(string original, string varName)
+    {
+        var key = new byte[2];
+        _rng.GetBytes(key);
+
+        var encoded = new List<long>();
+        foreach (var c in original)
+            encoded.Add(c - key[0]);
+
+        return BuildDecoderStmt(varName, encoded, (long)key[0]);
+    }
+
+    private Statement MakeTableDecoder(string original, string varName)
+    {
+        var key = new byte[4];
+        _rng.GetBytes(key);
+        var baseKey = BitConverter.ToInt32(key, 0) & 0x7FFFFFFF;
+
+        var encoded = new List<long>();
+        for (var i = 0; i < original.Length; i++)
+            encoded.Add(original[i] ^ ((baseKey + i * 7) & 0xFF));
+
+        return BuildDecoderStmt(varName, encoded, baseKey);
+    }
+
+    private Statement MakeArithDecoder(string original, string varName)
+    {
+        var key = new byte[4];
+        _rng.GetBytes(key);
+        var keyNum = Math.Max(1, (BitConverter.ToInt32(key, 0) & 0x7FFFFFFF) % 1000 + 1);
+
+        var encoded = new List<long>();
+        foreach (var c in original)
+            encoded.Add(c * keyNum);
+
+        var p = _funcCounter++;
+        var funcBody = $"local t=...;local r=''for i=1,#t do r=r..string.char(t[i]/{keyNum})end return r";
+        var loadStr = $"local t=...;local r=''for i=1,#t do r=r..string.char(t[i]/{keyNum})end return r";
 
         var encTable = new TableConstructorExpr();
-        for (var i = 0; i < encryptedValue.Length; i++)
-            encTable.Fields.Add(new TableField { Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)(int)encryptedValue[i]) });
+        foreach (var v in encoded)
+            encTable.Fields.Add(new TableField
+            {
+                Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
+            });
 
-        var keyTable = new TableConstructorExpr();
-        for (var i = 0; i < key.Length; i++)
-            keyTable.Fields.Add(new TableField { Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)(int)key[i]) });
-
-        var innerCall = new FunctionCallExpr(new FunctionCallExpr(new VarExpr("load"))
+        var decoderCall = new FunctionCallExpr(
+            new FunctionCallExpr(new VarExpr("load"))
+            {
+                Arguments =
+                {
+                    new LiteralExpr(LiteralExpr.LiteralKind.String, loadStr),
+                    new LiteralExpr(LiteralExpr.LiteralKind.String, $"=dec_{p}")
+                }
+            })
         {
-            Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.String, loadStr) }
-        })
-        {
-            Arguments = { encTable, keyTable }
+            Arguments = { encTable }
         };
 
         return new LocalVarStmt
         {
-            Names = { name },
-            Values = { innerCall }
+            Names = { varName },
+            Values = { decoderCall }
+        };
+    }
+
+    private Statement BuildDecoderStmt(string varName, List<long> encoded, long key)
+    {
+        var p = _funcCounter++;
+
+        // Generate decoder with per-string unique algorithm
+        var op = (p % 4) switch
+        {
+            0 => "+",
+            1 => "-",
+            2 => "~", // XOR in Lua 5.3+
+            _ => "+"
+        };
+
+        var negKey = op == "-" ? key : -key;
+
+        // Decoder as a load string (unique per string)
+        var decoderStr = op switch
+        {
+            "+" => $"local d=...;local r=''for i=1,#d do r=r..string.char(d[i]-{key})end return r",
+            "-" => $"local d=...;local r=''for i=1,#d do r=r..string.char(d[i]+{key})end return r",
+            "~" => $"local d=...;local r=''for i=1,#d do r=r..string.char(d[i]~{key})end return r",
+            _ => $"local d=...;local r=''for i=1,#d do r=r..string.char(d[i]-{key})end return r",
+        };
+
+        var encTable = new TableConstructorExpr();
+        foreach (var v in encoded)
+            encTable.Fields.Add(new TableField
+            {
+                Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
+            });
+
+        var decoderCall = new FunctionCallExpr(
+            new FunctionCallExpr(new VarExpr("load"))
+            {
+                Arguments =
+                {
+                    new LiteralExpr(LiteralExpr.LiteralKind.String, decoderStr),
+                    new LiteralExpr(LiteralExpr.LiteralKind.String, $"=dec_{p}")
+                }
+            })
+        {
+            Arguments = { encTable }
+        };
+
+        return new LocalVarStmt
+        {
+            Names = { varName },
+            Values = { decoderCall }
         };
     }
 
