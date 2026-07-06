@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
@@ -182,7 +183,7 @@ public partial class MainWindow : Window
             UpdateBtn.Content = "Загрузка с GitHub...";
             (var remoteHash, var latestVersion, var downloadUrl) = await FetchLatestReleaseAsync();
 
-            if (remoteHash.Length > 0 && localHash == remoteHash)
+            if (remoteHash.Length > 0 && ConstantTimeEquals(localHash, remoteHash))
             {
                 MessageBox.Show("Установлена последняя версия LunarGuard.",
                                 "Обновлений нет", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -194,13 +195,9 @@ public partial class MainWindow : Window
                     : $"Доступна новая версия: {latestVersion}\n\nХеш отличается от текущей.\nХотите перейти на страницу загрузки?";
                 var result = MessageBox.Show(msg, "Обновление найдено",
                     MessageBoxButton.YesNo, MessageBoxImage.Question);
-                if (result == MessageBoxResult.Yes)
-                    System.Diagnostics.Process.Start(
-                        new System.Diagnostics.ProcessStartInfo
-                        {
-                            FileName = downloadUrl,
-                            UseShellExecute = true
-                        });
+                if (result == MessageBoxResult.Yes && Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri)
+                    && uri.Scheme is "https" or "http" && IsTrustedHost(uri.Host))
+                    Process.Start(new ProcessStartInfo { FileName = uri.AbsoluteUri, UseShellExecute = true });
             }
         }
         catch (HttpRequestException)
@@ -225,6 +222,15 @@ public partial class MainWindow : Window
         var path = Assembly.GetExecutingAssembly().Location;
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLower();
+    }
+
+    private static bool ConstantTimeEquals(string a, string b)
+    {
+        if (a.Length != b.Length) return false;
+        var diff = 0;
+        for (var i = 0; i < a.Length; i++)
+            diff |= a[i] ^ b[i];
+        return diff == 0;
     }
 
     private static async Task<(string Hash, string Version, string DownloadUrl)> FetchLatestReleaseAsync()
@@ -266,13 +272,17 @@ public partial class MainWindow : Window
             throw new InvalidOperationException(
                 $"Release file too large ({contentLength:N0} bytes). Maximum allowed: 100 MiB.");
 
-        var tempFile = Path.GetTempFileName();
+        var tempDir = Path.Combine(Path.GetTempPath(), "LunarGuard");
+        Directory.CreateDirectory(tempDir);
+        var tempFile = Path.Combine(tempDir, $"{Guid.NewGuid():N}.tmp");
         try
         {
-            await using var fs = File.Create(tempFile);
-            await response.Content.CopyToAsync(fs);
+            await using (var fs = new FileStream(tempFile, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096))
+            {
+                await response.Content.CopyToAsync(fs);
+            }
 
-            await using var stream = File.OpenRead(tempFile);
+            await using var stream = new FileStream(tempFile, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
             var hash = Convert.ToHexString(SHA256.HashData(stream)).ToLower();
             return (hash, version, downloadUrl);
         }
@@ -282,9 +292,15 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool IsTrustedHost(string host)
+    {
+        return host is "github.com" or "api.github.com" or "raw.githubusercontent.com"
+            or "objects.githubusercontent.com" or "github.githubassets.com";
+    }
+
     private void ShowProgress(string status, int percent)
     {
-        Dispatcher.Invoke(() =>
+        _ = Dispatcher.BeginInvoke(() =>
         {
             ProgressPanel.Visibility = Visibility.Visible;
             ProgressStatusText.Text = status;
@@ -298,7 +314,7 @@ public partial class MainWindow : Window
 
     private void HideProgress()
     {
-        Dispatcher.Invoke(() =>
+        _ = Dispatcher.BeginInvoke(() =>
         {
             ProgressPanel.Visibility = Visibility.Collapsed;
             ProgressFill.Width = 0;

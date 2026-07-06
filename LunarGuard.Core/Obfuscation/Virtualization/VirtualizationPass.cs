@@ -259,12 +259,12 @@ end
 
 handlers[{opNames["SETG"]}] = function()
     local name = {codeName}[pc]; pc = pc + 1
-    _G[name] = pop()
+    vm_env[name] = pop()
 end
 
 handlers[{opNames["GETG"]}] = function()
     local name = {codeName}[pc]; pc = pc + 1
-    push(_G[name])
+    push(vm_env[name])
 end
 
 handlers[{opNames["SETL"]}] = function()

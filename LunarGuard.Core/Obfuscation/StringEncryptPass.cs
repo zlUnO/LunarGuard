@@ -12,7 +12,6 @@ public class StringEncryptPass : IObfuscationPass
 
     private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
     private int _nameCounter;
-    private int _funcCounter;
     private readonly List<Statement> _scatteredDecoders = new();
 
     public void Transform(BlockStmt root, ObfuscationOptions options)
@@ -26,7 +25,6 @@ public class StringEncryptPass : IObfuscationPass
 
         _scatteredDecoders.Clear();
         _nameCounter = 0;
-        _funcCounter = 0;
 
         foreach (var s in distinct)
         {
@@ -87,7 +85,7 @@ public class StringEncryptPass : IObfuscationPass
         foreach (var c in original)
             encoded.Add(c + offset);
 
-        return BuildExactDecoder(varName, encoded, offset, "-");
+        return BuildAstDecoderCall(varName, encoded, BinaryOp.Subtract, offset);
     }
 
     private Statement MakeOffsetDecoder(string original, string varName)
@@ -100,7 +98,7 @@ public class StringEncryptPass : IObfuscationPass
         foreach (var c in original)
             encoded.Add(c - offsetKey);
 
-        return BuildExactDecoder(varName, encoded, offsetKey, "+");
+        return BuildAstDecoderCall(varName, encoded, BinaryOp.Add, offsetKey);
     }
 
     private Statement MakeTableDecoder(string original, string varName)
@@ -113,8 +111,59 @@ public class StringEncryptPass : IObfuscationPass
         for (var i = 0; i < original.Length; i++)
             encoded.Add(original[i] + ((baseKey + i * 7) & 0xFF));
 
-        var p = _funcCounter++;
-        var loadStr = $"local d=...;local k={baseKey};local r=''for i=1,#d do r=r..string.char(d[i]-((k+(i-1)*7)%256))end return r";
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "r" },
+            Values = { new LiteralExpr(LiteralExpr.LiteralKind.String, "") }
+        });
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "k" },
+            Values = { new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)baseKey) }
+        });
+
+        var forBody = new BlockStmt();
+        var idxMinusOne = new BinaryExpr(BinaryOp.Subtract, new VarExpr("i"),
+            new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L));
+        var kPlusCalc = new BinaryExpr(BinaryOp.Add, new VarExpr("k"),
+            new BinaryExpr(BinaryOp.Multiply, idxMinusOne, new LiteralExpr(LiteralExpr.LiteralKind.Number, 7L)));
+        var modExpr = new BinaryExpr(BinaryOp.Modulo, kPlusCalc,
+            new LiteralExpr(LiteralExpr.LiteralKind.Number, 256L));
+
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("r") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Concat,
+                    new VarExpr("r"),
+                    new FunctionCallExpr(new VarExpr("string.char"))
+                    {
+                        Arguments =
+                        {
+                            new BinaryExpr(BinaryOp.Subtract,
+                                new IndexExpr(new VarExpr("d"), new VarExpr("i")),
+                                modExpr)
+                        }
+                    })
+            }
+        });
+
+        body.Statements.Add(new ForNumericStmt
+        {
+            VarName = "i",
+            Start = new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L),
+            End = new UnaryExpr(UnaryOp.Length, new VarExpr("d")),
+            Body = forBody
+        });
+        body.Statements.Add(new ReturnStmt { Values = { new VarExpr("r") } });
+
+        var funcExpr = new FuncDeclExpr
+        {
+            Parameters = { "d" },
+            Body = body
+        };
 
         var encTable = new TableConstructorExpr();
         foreach (var v in encoded)
@@ -123,15 +172,7 @@ public class StringEncryptPass : IObfuscationPass
                 Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
             });
 
-        var decoderCall = new FunctionCallExpr(
-            new FunctionCallExpr(new VarExpr("loadstring"))
-            {
-                Arguments =
-                {
-                    new LiteralExpr(LiteralExpr.LiteralKind.String, loadStr),
-                    new LiteralExpr(LiteralExpr.LiteralKind.String, $"=dec_{p}")
-                }
-            })
+        var callExpr = new FunctionCallExpr(funcExpr)
         {
             Arguments = { encTable }
         };
@@ -139,7 +180,7 @@ public class StringEncryptPass : IObfuscationPass
         return new LocalVarStmt
         {
             Names = { varName },
-            Values = { decoderCall }
+            Values = { callExpr }
         };
     }
 
@@ -153,8 +194,47 @@ public class StringEncryptPass : IObfuscationPass
         foreach (var c in original)
             encoded.Add(c * keyNum);
 
-        var p = _funcCounter++;
-        var loadStr = $"local t=...;local r=''for i=1,#t do r=r..string.char(t[i]/{keyNum})end return r";
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "r" },
+            Values = { new LiteralExpr(LiteralExpr.LiteralKind.String, "") }
+        });
+
+        var forBody = new BlockStmt();
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("r") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Concat,
+                    new VarExpr("r"),
+                    new FunctionCallExpr(new VarExpr("string.char"))
+                    {
+                        Arguments =
+                        {
+                            new BinaryExpr(BinaryOp.Divide,
+                                new IndexExpr(new VarExpr("d"), new VarExpr("i")),
+                                new LiteralExpr(LiteralExpr.LiteralKind.Number, (double)keyNum))
+                        }
+                    })
+            }
+        });
+
+        body.Statements.Add(new ForNumericStmt
+        {
+            VarName = "i",
+            Start = new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L),
+            End = new UnaryExpr(UnaryOp.Length, new VarExpr("d")),
+            Body = forBody
+        });
+        body.Statements.Add(new ReturnStmt { Values = { new VarExpr("r") } });
+
+        var funcExpr = new FuncDeclExpr
+        {
+            Parameters = { "d" },
+            Body = body
+        };
 
         var encTable = new TableConstructorExpr();
         foreach (var v in encoded)
@@ -163,15 +243,7 @@ public class StringEncryptPass : IObfuscationPass
                 Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
             });
 
-        var decoderCall = new FunctionCallExpr(
-            new FunctionCallExpr(new VarExpr("loadstring"))
-            {
-                Arguments =
-                {
-                    new LiteralExpr(LiteralExpr.LiteralKind.String, loadStr),
-                    new LiteralExpr(LiteralExpr.LiteralKind.String, $"=dec_{p}")
-                }
-            })
+        var callExpr = new FunctionCallExpr(funcExpr)
         {
             Arguments = { encTable }
         };
@@ -179,15 +251,53 @@ public class StringEncryptPass : IObfuscationPass
         return new LocalVarStmt
         {
             Names = { varName },
-            Values = { decoderCall }
+            Values = { callExpr }
         };
     }
 
-    private Statement BuildExactDecoder(string varName, List<long> encoded, long key, string op)
+    private Statement BuildAstDecoderCall(string varName, List<long> encoded, BinaryOp charOp, long key)
     {
-        var p = _funcCounter++;
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "r" },
+            Values = { new LiteralExpr(LiteralExpr.LiteralKind.String, "") }
+        });
 
-        var decoderStr = $"local d=...;local r=''for i=1,#d do r=r..string.char(d[i]{op}{key})end return r";
+        var forBody = new BlockStmt();
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("r") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Concat,
+                    new VarExpr("r"),
+                    new FunctionCallExpr(new VarExpr("string.char"))
+                    {
+                        Arguments =
+                        {
+                            new BinaryExpr(charOp,
+                                new IndexExpr(new VarExpr("d"), new VarExpr("i")),
+                                new LiteralExpr(LiteralExpr.LiteralKind.Number, key))
+                        }
+                    })
+            }
+        });
+
+        body.Statements.Add(new ForNumericStmt
+        {
+            VarName = "i",
+            Start = new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L),
+            End = new UnaryExpr(UnaryOp.Length, new VarExpr("d")),
+            Body = forBody
+        });
+        body.Statements.Add(new ReturnStmt { Values = { new VarExpr("r") } });
+
+        var funcExpr = new FuncDeclExpr
+        {
+            Parameters = { "d" },
+            Body = body
+        };
 
         var encTable = new TableConstructorExpr();
         foreach (var v in encoded)
@@ -196,15 +306,7 @@ public class StringEncryptPass : IObfuscationPass
                 Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
             });
 
-        var decoderCall = new FunctionCallExpr(
-            new FunctionCallExpr(new VarExpr("loadstring"))
-            {
-                Arguments =
-                {
-                    new LiteralExpr(LiteralExpr.LiteralKind.String, decoderStr),
-                    new LiteralExpr(LiteralExpr.LiteralKind.String, $"=dec_{p}")
-                }
-            })
+        var callExpr = new FunctionCallExpr(funcExpr)
         {
             Arguments = { encTable }
         };
@@ -212,7 +314,7 @@ public class StringEncryptPass : IObfuscationPass
         return new LocalVarStmt
         {
             Names = { varName },
-            Values = { decoderCall }
+            Values = { callExpr }
         };
     }
 

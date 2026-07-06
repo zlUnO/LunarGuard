@@ -354,7 +354,10 @@ public class LuaWriter : IAstVisitor
 
     public void Visit(FunctionCallExpr node)
     {
+        var isAnonFunc = node.Callee is FuncDeclExpr;
+        if (isAnonFunc) _sb.Append('(');
         node.Callee.Accept(this);
+        if (isAnonFunc) _sb.Append(')');
         if (node.IsMethodCall && node.MethodName != null)
             _sb.Append($":{node.MethodName}");
         if (node.Arguments.Count == 1 && node.Arguments[0] is LiteralExpr { Kind: LiteralExpr.LiteralKind.String })

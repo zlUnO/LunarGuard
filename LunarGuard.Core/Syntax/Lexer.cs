@@ -93,7 +93,10 @@ public class Lexer
             case ')': return Make(TokenType.RParen);
             case '{': return Make(TokenType.LBrace);
             case '}': return Make(TokenType.RBrace);
-            case '[': return Make(TokenType.LBracket);
+            case '[':
+                if (Peek() == '[' || Peek() == '=')
+                    return LongString();
+                return Make(TokenType.LBracket);
             case ']': return Make(TokenType.RBracket);
             case ';': return Make(TokenType.Semicolon);
             case ':': return Make(TokenType.Colon);
@@ -140,6 +143,32 @@ public class Lexer
         return Make(TokenType.Comment);
     }
 
+    private Token LongString()
+    {
+        var level = 0;
+        while (Peek() == '=') { Advance(); level++; }
+        if (Peek() != '[')
+            return Make(TokenType.LBracket);
+        Advance();
+        var sb = new StringBuilder();
+        while (!IsAtEnd())
+        {
+            if (Peek() == ']')
+            {
+                var closeLevel = 0; Advance();
+                while (Peek() == '=') { Advance(); closeLevel++; }
+                if (closeLevel == level && Peek() == ']') { Advance(); break; }
+                sb.Append(']');
+                for (var i = 0; i < closeLevel; i++) sb.Append('=');
+                continue;
+            }
+            var ch = Advance();
+            if (ch == '\n') _line++;
+            sb.Append(ch);
+        }
+        return Make(TokenType.String, sb.ToString());
+    }
+
     private Token IdentifierOrKeyword()
     {
         while (char.IsLetterOrDigit(Peek()) || Peek() == '_') Advance();
@@ -151,12 +180,14 @@ public class Lexer
 
     private Token Number()
     {
+        var isHex = false;
         if (_source[_start] == '0' && (Peek() == 'x' || Peek() == 'X'))
         {
             Advance();
             if (!IsHexDigit(Peek()))
                 return Error("incomplete hex literal after '0x'");
             while (IsHexDigit(Peek())) Advance();
+            isHex = true;
         }
         else
         {
@@ -174,9 +205,11 @@ public class Lexer
             }
         }
         var numStr = _source[_start.._current];
-        var numVal = numStr.Contains('.') || numStr.Contains('e') || numStr.Contains('E')
-            ? double.Parse(numStr, CultureInfo.InvariantCulture)
-            : long.Parse(numStr, CultureInfo.InvariantCulture);
+        var numVal = isHex
+            ? long.Parse(numStr[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+            : numStr.Contains('.') || numStr.Contains('e') || numStr.Contains('E')
+                ? double.Parse(numStr, CultureInfo.InvariantCulture)
+                : long.Parse(numStr, CultureInfo.InvariantCulture);
         return Make(TokenType.Number, numVal);
     }
 
