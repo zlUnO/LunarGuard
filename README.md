@@ -1,4 +1,4 @@
-# LunarGuard
+# LunarGuard-lua Security
 
 The project was made entirely with the help of AI
 ```
