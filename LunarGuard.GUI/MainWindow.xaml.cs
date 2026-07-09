@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
@@ -10,7 +9,10 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using LunarGuard.Core;
 using LunarGuard.Core.Obfuscation;
-using Microsoft.Win32;
+using OpenFileDialog = Microsoft.Win32.OpenFileDialog;
+using Brush = System.Windows.Media.Brush;
+using MessageBox = System.Windows.MessageBox;
+using WF = System.Windows.Forms;
 
 namespace LunarGuard.GUI;
 
@@ -18,6 +20,7 @@ public partial class MainWindow : Window
 {
     private string? _selectedFilePath;
     private bool _isProcessing;
+    private string? _selectedDirPath;
 
     public MainWindow()
     {
@@ -25,14 +28,6 @@ public partial class MainWindow : Window
 
         TabHome.Checked += Tab_Checked;
         TabFaq.Checked += Tab_Checked;
-        ChkRename.Checked += Setting_Changed;
-        ChkRename.Unchecked += Setting_Changed;
-        ChkEncrypt.Checked += Setting_Changed;
-        ChkEncrypt.Unchecked += Setting_Changed;
-        ChkDeadCode.Checked += Setting_Changed;
-        ChkDeadCode.Unchecked += Setting_Changed;
-
-        Setting_Changed(this, new RoutedEventArgs());
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
@@ -70,9 +65,30 @@ public partial class MainWindow : Window
             SelectFile(dialog.FileName);
     }
 
+    private void BrowseDir_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new WF.FolderBrowserDialog
+        {
+            Description = "Выберите папку с .lua файлами"
+        };
+        if (dialog.ShowDialog() == WF.DialogResult.OK)
+        {
+            _selectedDirPath = dialog.SelectedPath;
+            _selectedFilePath = null;
+            var files = Directory.GetFiles(_selectedDirPath, "*.lua");
+            FilePathText.Text = $"Папка: {Path.GetFileName(_selectedDirPath)}";
+            FileSizeText.Text = $"найдено {files.Length} .lua файлов";
+            FilePathText.Foreground = (Brush)new BrushConverter().ConvertFrom("#E2F0FD")!;
+
+            SettingsPanel.IsEnabled = true;
+            RunBtn.IsEnabled = true;
+        }
+    }
+
     private void SelectFile(string path)
     {
         _selectedFilePath = path;
+        _selectedDirPath = null;
         var name = Path.GetFileName(path);
         var info = new FileInfo(path);
         var size = info.Length switch
@@ -85,7 +101,6 @@ public partial class MainWindow : Window
         FileSizeText.Text = $"{size} | {Path.GetDirectoryName(Path.GetFullPath(path))}";
         FilePathText.Foreground = (Brush)new BrushConverter().ConvertFrom("#E2F0FD")!;
 
-        // Auto-set output path
         var dir = Path.GetDirectoryName(Path.GetFullPath(path))!;
         var outName = $"{Path.GetFileNameWithoutExtension(path)}.obfuscated.lua";
         OutputPathText.Text = Path.Combine(dir, outName);
@@ -95,16 +110,10 @@ public partial class MainWindow : Window
         RunBtn.IsEnabled = true;
     }
 
-    private void Setting_Changed(object sender, RoutedEventArgs e)
-    {
-        RenamePrefixRow.Visibility = ChkRename.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        StringKeyRow.Visibility = ChkEncrypt.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-        DeadCodeRow.Visibility = ChkDeadCode.IsChecked == true ? Visibility.Visible : Visibility.Collapsed;
-    }
-
     private async void Run_Click(object sender, RoutedEventArgs e)
     {
-        if (_isProcessing || _selectedFilePath is null) return;
+        if (_isProcessing) return;
+        if (_selectedFilePath is null && _selectedDirPath is null) return;
 
         _isProcessing = true;
         RunBtn.IsEnabled = false;
@@ -123,15 +132,36 @@ public partial class MainWindow : Window
             SplitExpressions = ChkSplitExpr.IsChecked == true,
             AntiDebug = ChkAntiDebug.IsChecked == true,
             Virtualize = ChkVirtualize.IsChecked == true,
-
+            OptimizeAst = ChkOptimize.IsChecked == true,
+            SplitStrings = ChkSplitStrings.IsChecked == true,
+            OpaquePredicates = ChkOpaque.IsChecked == true,
+            AntiTamper = ChkAntiTamper.IsChecked == true,
         };
 
-        ShowProgress($"Обработка {Path.GetFileName(_selectedFilePath)}...", 0);
+        if (_selectedDirPath != null)
+        {
+            await ProcessDirectory(_selectedDirPath, options);
+        }
+        else if (_selectedFilePath != null)
+        {
+            await ProcessSingleFile(_selectedFilePath, options);
+        }
+
+        _isProcessing = false;
+        RunBtn.IsEnabled = _selectedFilePath is not null || _selectedDirPath is not null;
+        BrowseBtn.IsEnabled = true;
+
+        await Task.Delay(1500);
+        HideProgress();
+    }
+
+    private async Task ProcessSingleFile(string filePath, ObfuscationOptions options)
+    {
+        ShowProgress($"Обработка {Path.GetFileName(filePath)}...", 0);
 
         try
         {
-            // Read source directly — bypass ProcessFile() CWD restriction
-            var source = await File.ReadAllTextAsync(_selectedFilePath);
+            var source = await File.ReadAllTextAsync(filePath);
 
             var result = await Task.Run(() =>
             {
@@ -139,9 +169,8 @@ public partial class MainWindow : Window
                 return processor.Process(source, options);
             });
 
-            // Write output next to the input file
-            var dir = Path.GetDirectoryName(Path.GetFullPath(_selectedFilePath))!;
-            var outName = $"{Path.GetFileNameWithoutExtension(_selectedFilePath)}.obfuscated.lua";
+            var dir = Path.GetDirectoryName(Path.GetFullPath(filePath))!;
+            var outName = $"{Path.GetFileNameWithoutExtension(filePath)}.obfuscated.lua";
             var outputPath = Path.Combine(dir, outName);
 
             await File.WriteAllTextAsync(outputPath, result);
@@ -149,23 +178,52 @@ public partial class MainWindow : Window
             ShowProgress("Готово!", 100);
 
             var msg = $"Файл успешно обработан!\n\nСохранено:\n{outputPath}";
-            MessageBox.Show(msg, "LunarGuard", MessageBoxButton.OK, MessageBoxImage.Information);
+            System.Windows.MessageBox.Show(msg, "LunarGuard", MessageBoxButton.OK, MessageBoxImage.Information);
         }
         catch (Exception ex)
         {
             ShowProgress($"Ошибка: {ex.Message}", 0);
-            MessageBox.Show($"Ошибка обработки:\n{ex.Message}", "LunarGuard",
+            System.Windows.MessageBox.Show($"Ошибка обработки:\n{ex.Message}", "LunarGuard",
                             MessageBoxButton.OK, MessageBoxImage.Error);
         }
-        finally
-        {
-            _isProcessing = false;
-            RunBtn.IsEnabled = _selectedFilePath is not null;
-            BrowseBtn.IsEnabled = true;
+    }
 
-            await Task.Delay(1500);
-            HideProgress();
+    private async Task ProcessDirectory(string dirPath, ObfuscationOptions options)
+    {
+        var files = Directory.GetFiles(dirPath, "*.lua");
+        var success = 0;
+        var fail = 0;
+
+        for (var i = 0; i < files.Length; i++)
+        {
+            var file = files[i];
+            var pct = (i * 100) / files.Length;
+            ShowProgress($"[{i + 1}/{files.Length}] {Path.GetFileName(file)}...", pct);
+
+            try
+            {
+                var source = await File.ReadAllTextAsync(file);
+                var result = await Task.Run(() =>
+                {
+                    var processor = new LunarGuardProcessor();
+                    return processor.Process(source, options);
+                });
+
+                var outName = $"{Path.GetFileNameWithoutExtension(file)}.obfuscated.lua";
+                var outputPath = Path.Combine(dirPath, outName);
+                await File.WriteAllTextAsync(outputPath, result);
+                success++;
+            }
+            catch
+            {
+                fail++;
+            }
         }
+
+        ShowProgress($"Готово: {success} OK, {fail} ошибок", 100);
+        var msg = $"Обработано файлов: {success}\nОшибок: {fail}";
+        System.Windows.MessageBox.Show(msg, "LunarGuard", MessageBoxButton.OK,
+            fail > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
     }
 
     private object? _updateBtnOriginal;
@@ -185,7 +243,7 @@ public partial class MainWindow : Window
 
             if (remoteHash.Length > 0 && ConstantTimeEquals(localHash, remoteHash))
             {
-                MessageBox.Show("Установлена последняя версия LunarGuard.",
+                System.Windows.MessageBox.Show("Установлена последняя версия LunarGuard.",
                                 "Обновлений нет", MessageBoxButton.OK, MessageBoxImage.Information);
             }
             else
@@ -193,7 +251,7 @@ public partial class MainWindow : Window
                 var msg = remoteHash.Length == 0
                     ? $"Доступна новая версия: {latestVersion}\n\nХотите перейти на страницу загрузки?"
                     : $"Доступна новая версия: {latestVersion}\n\nХеш отличается от текущей.\nХотите перейти на страницу загрузки?";
-                var result = MessageBox.Show(msg, "Обновление найдено",
+                var result = System.Windows.MessageBox.Show(msg, "Обновление найдено",
                     MessageBoxButton.YesNo, MessageBoxImage.Question);
                 if (result == MessageBoxResult.Yes && Uri.TryCreate(downloadUrl, UriKind.Absolute, out var uri)
                     && uri.Scheme is "https" or "http" && IsTrustedHost(uri.Host))
@@ -202,12 +260,12 @@ public partial class MainWindow : Window
         }
         catch (HttpRequestException)
         {
-            MessageBox.Show("Не удалось проверить обновления.\nПроверьте подключение к интернету.",
+            System.Windows.MessageBox.Show("Не удалось проверить обновления.\nПроверьте подключение к интернету.",
                             "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {
-            MessageBox.Show($"Ошибка проверки обновлений:\n{ex.Message}",
+            System.Windows.MessageBox.Show($"Ошибка проверки обновлений:\n{ex.Message}",
                             "Ошибка", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally

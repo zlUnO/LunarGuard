@@ -596,7 +596,7 @@ public class ObfuscationPassTests
     [Fact]
     public void VirtualizationPass_OutputContainsVM()
     {
-        var root = Parse("local x = 1");
+        var root = Parse("local function foo() local x = 1 end");
         var pass = new VirtualizationPass();
         var opts = AllDisabled();
         opts.Virtualize = true;

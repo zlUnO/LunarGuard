@@ -1,3 +1,5 @@
+using System.Text;
+using System.Text.RegularExpressions;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
 using LunarGuard.Core.CodeGen;
@@ -9,6 +11,8 @@ namespace LunarGuard.Core;
 
 public class LunarGuardProcessor
 {
+    private static int _chunkId;
+
     public string Process(string source, ObfuscationOptions? options = null)
     {
         options ??= new ObfuscationOptions();
@@ -22,7 +26,10 @@ public class LunarGuardProcessor
         root.Statements.AddRange(stmts);
 
         var pm = new PassManager();
+        pm.Register(new AstOptimizationPass());
         pm.Register(new RenamePass());
+        pm.Register(new StringSplitPass());
+        pm.Register(new OpaquePredicatePass());
         pm.Register(new DeadCodePass());
         pm.Register(new StringEncryptPass());
         pm.Register(new ControlFlowPass());
@@ -30,11 +37,38 @@ public class LunarGuardProcessor
         pm.Register(new AntiDebugPass());
         pm.Register(new NumberEncodePass());
         pm.Register(new VirtualizationPass());
+        pm.Register(new AntiTamperPass());
 
         pm.RunAll(root, options);
 
         var writer = new LuaWriter();
-        return writer.Write(root);
+        var code = writer.Write(root);
+
+        // Wrap in loadstring to avoid Lua 5.1's 200-local-variable limit on root chunk
+        return WrapInLoadstring(code);
+    }
+
+    /// <summary>
+    /// Wrap generated code in loadstring(...)() to bypass Lua 5.1's 200-local limit.
+    /// Uses long bracket syntax [=[ ... ]=] with auto-detected separator count.
+    /// </summary>
+    private static string WrapInLoadstring(string code)
+    {
+        // Find the required number of = signs to avoid collision
+        var eqCount = 0;
+        while (true)
+        {
+            var testClose = eqCount == 0 ? "]]" : $"]{new string('=', eqCount)}]";
+            if (!code.Contains(testClose))
+                break;
+            eqCount++;
+        }
+
+        var chunkName = $"[lunarguard_{++_chunkId}]";
+        var bracketOpen = eqCount == 0 ? "[[" : $"[{new string('=', eqCount)}[";
+        var bracketClose = eqCount == 0 ? "]]" : $"]{new string('=', eqCount)}]";
+
+        return $"loadstring({bracketOpen}\n{code}\n{bracketClose}, \"{chunkName}\")()";
     }
 
     public string ProcessFile(string inputPath, string? outputPath = null, ObfuscationOptions? options = null)

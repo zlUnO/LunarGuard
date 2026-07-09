@@ -59,20 +59,20 @@ public class AntiDebugPass : IObfuscationPass
         var falseTarget = BitConverter.ToInt32(buf, 0) & 0x7FFFFFFF;
         var branchVar = $"_{BitConverter.ToInt32(buf, 4):x8}";
 
-        // debug.getinfo(0) == nil -> debug is hooked -> os.exit(1)
-        var cond = new BinaryExpr(BinaryOp.Eq,
-            new FunctionCallExpr(new MemberExpr(new VarExpr("debug"), "getinfo"))
-            {
-                Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, 0L) }
-            },
-            new LiteralExpr(LiteralExpr.LiteralKind.Nil, null));
-
-        return new IfStmt
+        // Wrap in pcall to avoid crashes when `debug` is nil (GameSense sandbox)
+        // pcall(function() if debug.getinfo(0) == nil then os.exit(1) end end)
+        var pcallBody = new BlockStmt();
+        pcallBody.Statements.Add(new IfStmt
         {
             Branches =
             {
                 (
-                    cond,
+                    new BinaryExpr(BinaryOp.Eq,
+                        new FunctionCallExpr(new MemberExpr(new VarExpr("debug"), "getinfo"))
+                        {
+                            Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, 0L) }
+                        },
+                        new LiteralExpr(LiteralExpr.LiteralKind.Nil, null)),
                     new BlockStmt
                     {
                         Statements =
@@ -87,6 +87,15 @@ public class AntiDebugPass : IObfuscationPass
                         }
                     }
                 )
+            }
+        });
+
+        var pcallFunc = new FuncDeclExpr { Parameters = { }, Body = pcallBody };
+        return new FunctionCallStmt
+        {
+            Call = new FunctionCallExpr(new VarExpr("pcall"))
+            {
+                Arguments = { pcallFunc }
             }
         };
     }

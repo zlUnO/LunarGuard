@@ -42,21 +42,12 @@ public class StringEncryptPass : IObfuscationPass
 
     private void ScatterDecoders(BlockStmt root)
     {
-        // Must insert decoders BEFORE any statement that uses them.
-        // Just insert all at the start of the root block (after anti-debug).
-        var insertAt = 0;
-        for (var i = 0; i < root.Statements.Count; i++)
-        {
-            if (root.Statements[i] is IfStmt && !(root.Statements[i] is DoStmt))
-            {
-                insertAt = i + 1;
-                continue;
-            }
-            break;
-        }
-
+        // Decoders must be declared at the very top of the root block so they are
+        // always assigned at runtime BEFORE any consumer. Other passes (anti-debug,
+        // dead-code, constant folding) may wrap the original body in `if` blocks
+        // that execute before a decoder inserted lower down would be reached.
         for (var i = 0; i < _scatteredDecoders.Count; i++)
-            root.Statements.Insert(insertAt + i, _scatteredDecoders[i]);
+            root.Statements.Insert(i, _scatteredDecoders[i]);
     }
 
     private Statement MakeScatteredDecoder(string original, string varName)

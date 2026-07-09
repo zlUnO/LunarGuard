@@ -18,7 +18,7 @@ public static class Program
                 .Color(Color.Purple));
 
         AnsiConsole.MarkupLine("[grey]Lua Script Protector — Next Generation Obfuscation[/]");
-        AnsiConsole.MarkupLine($"[grey]Version 1.0.0 | {DateTime.Now:yyyy-MM-dd}[/]\n");
+        AnsiConsole.MarkupLine($"[grey]Version 2.0.0 | {DateTime.Now:yyyy-MM-dd}[/]\n");
 
         var app = new CommandApp();
         app.Configure(config =>
@@ -39,13 +39,21 @@ public static class Program
 
 public class ObfuscateSettings : CommandSettings
 {
-    [Description("Input Lua script file path")]
+    [Description("Input Lua script file path or directory (with --dir)")]
     [CommandArgument(0, "[input]")]
     public string? Input { get; set; }
 
     [Description("Output file path (default: input.obfuscated.lua)")]
     [CommandOption("-o|--output")]
     public string? Output { get; set; }
+
+    [Description("Obfuscation preset: debug, fast, balanced, max (default: balanced)")]
+    [CommandOption("--preset")]
+    public string? Preset { get; set; }
+
+    [Description("Process all .lua files in a directory")]
+    [CommandOption("--dir")]
+    public bool BatchMode { get; set; }
 
     [Description("Disable variable renaming")]
     [CommandOption("--no-rename")]
@@ -79,6 +87,22 @@ public class ObfuscateSettings : CommandSettings
     [CommandOption("--no-vm")]
     public bool NoVm { get; set; }
 
+    [Description("Disable AST optimization")]
+    [CommandOption("--no-optimize")]
+    public bool NoOptimize { get; set; }
+
+    [Description("Disable string splitting")]
+    [CommandOption("--no-splitstrings")]
+    public bool NoSplitStrings { get; set; }
+
+    [Description("Disable opaque predicates")]
+    [CommandOption("--no-opaque")]
+    public bool NoOpaque { get; set; }
+
+    [Description("Disable anti-tamper")]
+    [CommandOption("--no-antitamper")]
+    public bool NoAntiTamper { get; set; }
+
     [Description("String encryption key")]
     [CommandOption("--key")]
     public string? StringKey { get; set; }
@@ -100,7 +124,13 @@ public class ObfuscateCommand : Command<ObfuscateSettings>
         {
             AnsiConsole.MarkupLine("[red]No input file specified![/]");
             AnsiConsole.MarkupLine("Usage: [yellow]LunarGuard obfuscate <script.lua> [options][/]");
+            AnsiConsole.MarkupLine("       [yellow]LunarGuard obfuscate <dir> --dir[/]");
             return 1;
+        }
+
+        if (settings.BatchMode)
+        {
+            return ProcessDirectory(settings);
         }
 
         if (!File.Exists(settings.Input))
@@ -109,66 +139,105 @@ public class ObfuscateCommand : Command<ObfuscateSettings>
             return 1;
         }
 
-        var fileInfo = new FileInfo(settings.Input);
-        const long maxSize = 10L * 1024 * 1024;
-        if (fileInfo.Length > maxSize)
+        return ProcessSingleFile(settings.Input, settings);
+    }
+
+    private int ProcessDirectory(ObfuscateSettings settings)
+    {
+        if (!Directory.Exists(settings.Input))
         {
-            AnsiConsole.MarkupLine($"[red]Input file too large ({fileInfo.Length:N0} bytes). Maximum allowed: 10 MiB.[/]");
+            AnsiConsole.MarkupLine($"[red]Directory not found: {settings.Input}[/]");
             return 1;
         }
 
-        var source = File.ReadAllText(settings.Input);
+        var files = Directory.GetFiles(settings.Input, "*.lua");
+        if (files.Length == 0)
+        {
+            AnsiConsole.MarkupLine("[yellow]No .lua files found in directory.[/]");
+            return 0;
+        }
 
-        AnsiConsole.Status()
-            .Spinner(Spinner.Known.Dots)
-            .SpinnerStyle(Style.Parse("purple"))
-            .Start("Initializing...", ctx =>
+        AnsiConsole.MarkupLine($"[green]Found {files.Length} .lua files[/]\n");
+
+        var success = 0;
+        var failed = 0;
+
+        foreach (var file in files)
+        {
+            var fileName = Path.GetFileName(file);
+            AnsiConsole.Markup($"  [cyan]{fileName}[/] ... ");
+
+            try
             {
-                ctx.Status("Parsing Lua script...");
-                Thread.Sleep(100);
+                ProcessSingleFile(file, settings, silent: true);
+                AnsiConsole.MarkupLine("[green]OK[/]");
+                success++;
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]FAIL: {ex.Message}[/]");
+                failed++;
+            }
+        }
 
-                ctx.Status("Applying obfuscation passes...");
-                Thread.Sleep(200);
+        AnsiConsole.MarkupLine($"\n[bold]Done: {success} succeeded, {failed} failed[/]");
+        return failed > 0 ? 1 : 0;
+    }
 
-                ctx.Status("Finalizing...");
-                Thread.Sleep(100);
-            });
-
-        // Build options
-        var options = new ObfuscationOptions
+    private int ProcessSingleFile(string inputPath, ObfuscateSettings settings, bool silent = false)
+    {
+        var fileInfo = new FileInfo(inputPath);
+        const long maxSize = 10L * 1024 * 1024;
+        if (fileInfo.Length > maxSize)
         {
-            RenameVariables = !settings.NoRename,
-            EncryptStrings = !settings.NoStrings,
-            EncodeNumbers = !settings.NoNumbers,
-            InjectDeadCode = !settings.NoDeadCode,
-            ObfuscateControlFlow = !settings.NoControlFlow,
-            SplitExpressions = !settings.NoSplit,
-            AntiDebug = !settings.NoAntiDebug,
-            Virtualize = !settings.NoVm,
-            StringKey = settings.StringKey ?? "lx9zq4k7",
-            DeadCodeBlocks = settings.DeadCodeCount ?? 5,
-        };
+            if (!silent) AnsiConsole.MarkupLine($"[red]Input file too large ({fileInfo.Length:N0} bytes).[/]");
+            return 1;
+        }
 
-        var passesEnabled = new List<(string Name, bool Enabled)>
+        var source = File.ReadAllText(inputPath);
+
+        if (!silent)
         {
-            ("Variable Renaming", options.RenameVariables),
-            ("String Encryption", options.EncryptStrings),
-            ("Number Encoding", options.EncodeNumbers),
-            ("Dead Code Injection", options.InjectDeadCode),
-            ("Control Flow Obfuscation", options.ObfuscateControlFlow),
-            ("Expression Splitting", options.SplitExpressions),
-            ("Anti-Debug", options.AntiDebug),
-            ("Bytecode Virtualization", options.Virtualize),
-        };
+            AnsiConsole.Status()
+                .Spinner(Spinner.Known.Dots)
+                .SpinnerStyle(Style.Parse("purple"))
+                .Start("Processing...", ctx =>
+                {
+                    ctx.Status("Parsing Lua script...");
+                    Thread.Sleep(50);
+                    ctx.Status("Applying obfuscation passes...");
+                    Thread.Sleep(100);
+                    ctx.Status("Finalizing...");
+                    Thread.Sleep(50);
+                });
+        }
 
-        if (settings.Verbose)
+        var options = BuildOptions(settings);
+
+        if (settings.Verbose && !silent)
         {
             var table = new Table()
                 .Border(TableBorder.Rounded)
                 .AddColumn("[yellow]Pass[/]")
                 .AddColumn("[yellow]Status[/]");
 
-            foreach (var (name, enabled) in passesEnabled)
+            var passes = new (string, bool)[]
+            {
+                ("AST Optimization", options.OptimizeAst),
+                ("Variable Renaming", options.RenameVariables),
+                ("String Splitting", options.SplitStrings),
+                ("Opaque Predicates", options.OpaquePredicates),
+                ("String Encryption", options.EncryptStrings),
+                ("Number Encoding", options.EncodeNumbers),
+                ("Dead Code Injection", options.InjectDeadCode),
+                ("Control Flow Obfuscation", options.ObfuscateControlFlow),
+                ("Expression Splitting", options.SplitExpressions),
+                ("Anti-Debug", options.AntiDebug),
+                ("Anti-Tamper", options.AntiTamper),
+                ("Bytecode Virtualization", options.Virtualize),
+            };
+
+            foreach (var (name, enabled) in passes)
                 table.AddRow(name, enabled ? "[green]Enabled[/]" : "[grey]Disabled[/]");
 
             AnsiConsole.Write(table);
@@ -182,51 +251,77 @@ public class ObfuscateCommand : Command<ObfuscateSettings>
             var result = processor.Process(source, options);
             sw.Stop();
 
-            var outputPath = settings.Output ?? Path.ChangeExtension(settings.Input, ".obfuscated.lua");
-            var outputFull = Path.GetFullPath(outputPath);
-            var cwd = Path.GetFullPath(Environment.CurrentDirectory);
-            if (!outputFull.StartsWith(cwd + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(outputFull, cwd, StringComparison.OrdinalIgnoreCase))
+            var outputPath = settings.Output ?? Path.ChangeExtension(inputPath, ".obfuscated.lua");
+            File.WriteAllText(outputPath, result);
+
+            if (!silent)
             {
-                AnsiConsole.MarkupLine("[red]Output path must be within the current working directory.[/]");
-                return 1;
+                var resultTable = new Table()
+                    .Border(TableBorder.Rounded)
+                    .AddColumn("[yellow]Metric[/]")
+                    .AddColumn("[yellow]Value[/]");
+
+                var originalSize = source.Length;
+                var obfuscatedSize = result.Length;
+                var ratio = originalSize > 0 ? (double)obfuscatedSize / originalSize : 0;
+
+                resultTable.AddRow("Input file", $"[cyan]{Path.GetFileName(inputPath)}[/]");
+                resultTable.AddRow("Output file", $"[cyan]{Path.GetFileName(outputPath)}[/]");
+                resultTable.AddRow("Original size", $"{originalSize:N0} bytes");
+                resultTable.AddRow("Obfuscated size", $"{obfuscatedSize:N0} bytes");
+                resultTable.AddRow("Blow-up ratio", $"[yellow]{ratio:F2}x[/]");
+                resultTable.AddRow("Processing time", $"[green]{sw.ElapsedMilliseconds} ms[/]");
+
+                AnsiConsole.Write(resultTable);
+                AnsiConsole.MarkupLine($"\n[bold green]✔ Successfully obfuscated![/] Output: [underline]{outputPath}[/]");
             }
-            var outputDir = Path.GetDirectoryName(outputFull);
-            if (outputDir != null && !Directory.Exists(outputDir))
-            {
-                AnsiConsole.MarkupLine($"[red]Output directory does not exist: {outputDir}[/]");
-                return 1;
-            }
-            File.WriteAllText(outputFull, result);
-
-            var resultTable = new Table()
-                .Border(TableBorder.Rounded)
-                .AddColumn("[yellow]Metric[/]")
-                .AddColumn("[yellow]Value[/]");
-
-            var originalSize = source.Length;
-            var obfuscatedSize = result.Length;
-            var ratio = originalSize > 0 ? (double)obfuscatedSize / originalSize : 0;
-
-            resultTable.AddRow("Input file", $"[cyan]{Path.GetFileName(settings.Input)}[/]");
-            resultTable.AddRow("Output file", $"[cyan]{Path.GetFileName(outputPath)}[/]");
-            resultTable.AddRow("Original size", $"{originalSize:N0} bytes");
-            resultTable.AddRow("Obfuscated size", $"{obfuscatedSize:N0} bytes");
-            resultTable.AddRow("Blow-up ratio", $"[yellow]{ratio:F2}x[/]");
-            resultTable.AddRow("Processing time", $"[green]{sw.ElapsedMilliseconds} ms[/]");
-
-            AnsiConsole.Write(resultTable);
-
-            AnsiConsole.MarkupLine($"\n[bold green]✔ Successfully obfuscated![/] Output: [underline]{outputPath}[/]");
 
             return 0;
         }
         catch (Exception ex)
         {
             sw.Stop();
-            AnsiConsole.WriteException(ex);
+            if (!silent) AnsiConsole.WriteException(ex);
             return 1;
         }
+    }
+
+    private static ObfuscationOptions BuildOptions(ObfuscateSettings settings)
+    {
+        ObfuscationOptions options;
+
+        if (!string.IsNullOrEmpty(settings.Preset))
+        {
+            options = settings.Preset.ToLower() switch
+            {
+                "debug" => ObfuscationOptions.FromPreset(Preset.Debug),
+                "fast" => ObfuscationOptions.FromPreset(Preset.Fast),
+                "max" => ObfuscationOptions.FromPreset(Preset.Max),
+                _ => ObfuscationOptions.FromPreset(Preset.Balanced),
+            };
+        }
+        else
+        {
+            options = new ObfuscationOptions();
+        }
+
+        if (settings.NoRename) options.RenameVariables = false;
+        if (settings.NoStrings) options.EncryptStrings = false;
+        if (settings.NoNumbers) options.EncodeNumbers = false;
+        if (settings.NoDeadCode) options.InjectDeadCode = false;
+        if (settings.NoControlFlow) options.ObfuscateControlFlow = false;
+        if (settings.NoSplit) options.SplitExpressions = false;
+        if (settings.NoAntiDebug) options.AntiDebug = false;
+        if (settings.NoVm) options.Virtualize = false;
+        if (settings.NoOptimize) options.OptimizeAst = false;
+        if (settings.NoSplitStrings) options.SplitStrings = false;
+        if (settings.NoOpaque) options.OpaquePredicates = false;
+        if (settings.NoAntiTamper) options.AntiTamper = false;
+
+        if (settings.StringKey != null) options.StringKey = settings.StringKey;
+        if (settings.DeadCodeCount.HasValue) options.DeadCodeBlocks = settings.DeadCodeCount.Value;
+
+        return options;
     }
 }
 
@@ -240,7 +335,7 @@ public class InfoCommand : Command<InfoSettings>
             .AddColumn("[yellow]Value[/]");
 
         info.AddRow("Name", "[bold purple]LunarGuard[/]");
-        info.AddRow("Version", "1.0.0");
+        info.AddRow("Version", "2.0.0");
         info.AddRow("Description", "Next-generation Lua script obfuscation engine");
         info.AddRow("Target", "Lua 5.1 (GameSense, Neverlose, CS:GO scripts)");
         info.AddRow("Author", "github.com/lunarguard");
@@ -249,23 +344,34 @@ public class InfoCommand : Command<InfoSettings>
         AnsiConsole.Write(info);
 
         AnsiConsole.MarkupLine("\n[bold]Available Commands:[/]");
-        AnsiConsole.MarkupLine("  [green]obfuscate[/] [input]    Obfuscate a Lua script");
-        AnsiConsole.MarkupLine("  [green]info[/]                Show this information");
+        AnsiConsole.MarkupLine("  [green]obfuscate[/] [input]       Obfuscate a Lua script");
+        AnsiConsole.MarkupLine("  [green]obfuscate[/] [dir] --dir   Batch process a directory");
+        AnsiConsole.MarkupLine("  [green]info[/]                     Show this information");
 
-        AnsiConsole.MarkupLine("\n[bold]Available Passes:[/]");
+        AnsiConsole.MarkupLine("\n[bold]Available Presets:[/]");
+        AnsiConsole.MarkupLine("  [green]--preset debug[/]       Minimal protection, fastest");
+        AnsiConsole.MarkupLine("  [green]--preset fast[/]        Basic protection, no VM");
+        AnsiConsole.MarkupLine("  [green]--preset balanced[/]    All passes, VM disabled (default)");
+        AnsiConsole.MarkupLine("  [green]--preset max[/]         Maximum protection, full VM");
+
+        AnsiConsole.MarkupLine("\n[bold]Available Passes (12 total):[/]");
         var passes = new Table()
             .Border(TableBorder.Rounded)
             .AddColumn("[yellow]Pass[/]")
             .AddColumn("[yellow]Flag[/]")
             .AddColumn("[yellow]Description[/]");
 
+        passes.AddRow("AST Optimization", "--no-optimize", "Constant folding + dead code elimination");
         passes.AddRow("Variable Renaming", "--no-rename", "Renames locals to unreadable names");
+        passes.AddRow("String Splitting", "--no-splitstrings", "Splits strings into chunks");
+        passes.AddRow("Opaque Predicates", "--no-opaque", "Always-true branch conditions");
         passes.AddRow("String Encryption", "--no-strings", "Encrypts string literals with XOR cipher");
         passes.AddRow("Number Encoding", "--no-numbers", "Obfuscates numeric literals");
         passes.AddRow("Dead Code Injection", "--no-deadcode", "Injects unreachable junk code");
         passes.AddRow("Control Flow", "--no-cflow", "Wraps code in opaque predicates");
         passes.AddRow("Expression Splitting", "--no-split", "Splits complex expressions into locals");
         passes.AddRow("Anti-Debug", "--no-antidebug", "Blocks debugger/detection tools");
+        passes.AddRow("Anti-Tamper", "--no-antitamper", "Code integrity checks at runtime");
         passes.AddRow("Bytecode VM", "--no-vm", "Converts code to custom VM bytecode");
 
         AnsiConsole.Write(passes);

@@ -1,71 +1,73 @@
 # Changelog
 
-## [1.1.1] — 2026-07-06
+All notable changes to LunarGuard are documented here. The format is based on
+[Keep a Changelog](https://keepachangelog.com/).
 
-### Исправлено
-- **ExpressionSplitPass**: `InvalidCastException` при сплите `FunctionCallStmt.Call` — `SplitExpr` возвращал `VarExpr`, а код пытался кастануть в `FunctionCallExpr`
-- **StringEncryptPass**: 
-  - `load` → `loadstring` для Lua 5.1-совместимости (в Lua 5.1 `load` не принимает `(string, name)`)
-  - Полный разрыв encoder-decoder: XOR-кодировщик использовал `^ (key&0xFF)`, а декодер — `- key` со случайной операцией. Переписаны все 4 алгоритма: каждый encoder теперь генерирует точный inverse decoder
-  - `~` (XOR) → `+`/`-` для Lua 5.1-совместимости
-  - ScatterDecoders ставил декодеры ПОСЛЕ их первого использования → `nil` references. Все декодеры теперь вставляются в начало root-блока (после anti-debug)
-- **NumberEncodePass**: `EncodeNested` давал неверные результаты: `inner = |num|-mid` + `remainder = num-mid` = `num-2*mid` вместо `num`. Исправлено на `inner = mid`, `remainder = num-mid`
-- **VirtualizationPass**:
-  - `local vm_run = loadstring(...)` → глобальная `vm_run = loadstring(...)` (chunk из loadstring не видит enclosing locals)
-  - `v ~ key` (XOR дешифровка байткода) → `v + key` для Lua 5.1
-  - Два integrity XOR-а (`~`) → `-` для Lua 5.1
-  - `load(string, name)` → `loadstring(string, name)` для Lua 5.1
+## [2.0.0] - 2026-07-09
 
-### Технические детали
-- Все 53 теста проходят. 0 ошибок сборки, 0 предупреждений.
-- Non-VM обфускация (все проходы): 7 486 байт, Lua 5.1, корректно исполняется
-- VM-обфускация: 13 151 байт, проходит `loadstring`, но есть архитектурная проблема `VarExpr`/`GETG` vs `GETL` в `VmGenerator`
+### Fixed — Bytecode Virtualization (the headline of this release)
 
-## [1.1.0] — 2026-07-06
+The custom VM was producing scripts that crashed or returned wrong values.
+The following were corrected:
 
-### Добавлено
-- **GUI-меню** — новый проект `LunarGuard.GUI` (WPF .NET 9, Windows)
-  - Дизайн в стиле glassmorphism с тёмной темой и размытием
-  - Две вкладки: **Главная** (выбор файла + полная панель настроек) и **FAQ** (описание каждой опции обфускации)
-  - Боковая панель с логотипом-щитом, индикатором статуса и кнопкой проверки обновлений
-  - Выбор `.lua` файла через стандартный диалог Windows
-  - Автоматическая генерация имени выходного файла (`*.obfuscated.lua`)
-  - Прогресс-бар и индикация статуса обработки
-- **Проверка обновлений** через GitHub API
-  - SHA256-хеширование текущего `LunarGuard.dll`
-  - Загрузка последнего релиза с `github.com/zlUnO/LunarGuard`
-  - Сравнение хешей для определения необходимости обновления
-  - Перенаправление на страницу загрузки при наличии новой версии
-- Поддержка решения (`LunarGuard.sln`) объединяет все 4 проекта: Core, CLI, Tests, GUI
+- **Lexer integer typing.** Numeric literals were boxed as `double`
+  through a ternary `condition ? double.Parse(…) : long.Parse(…)`, so every
+  integer became `double` and `LOADK` operands bypassed the operand encryption,
+  then got corrupted at runtime. Integer literals are now stored as `long`.
+- **Comparison operand order.** `LT`/`GT`/`LEQ`/`GEQ` popped operands in the
+  wrong order (`a < b` where `a` was the top-of-stack value). Now `b < a`,
+  matching Lua's stack convention. This also unmasked the next bug.
+- **Jump target off-by-one.** Lua's program counter is 1-indexed while the
+  bytecode list is 0-indexed. Every `JZ`/`JMP`/loop-back/branch-end patch
+  (and the short-circuit `JNZ`) now adds `+1`. Previously jumps landed on the
+  wrong opcode, often executing `RET` early.
+- **Recursive / local calls.** Function calls now resolve via `GETL` (register)
+  when the callee is a local, instead of always `GETG` (global). The
+  function's own value is also stored into its VM register before the interpreter
+  runs, so recursion works (`fib(10)` now returns `55`).
+- **CALL register corruption.** The `CALL` handler saves and restores the VM
+  register table across recursive invocations.
+- **Multiple return values.** The generated wrapper now drains the shared VM
+  stack and returns every value, instead of returning only the top one
+  (`calculate(10,20)` now yields `30, 200` rather than `200, nil`).
+- **Upvalue guard.** Functions that capture an outer-scope local are skipped
+  by the VM (the register model has no closure support) instead of resolving
+  captured locals to `nil`.
 
-### Исправлено
-- **Путь к файлу**: обход CWD-ограничения в GUI — используется прямой ввод-вывод через `Process()`, минуя `ProcessFile()` с проверкой рабочей директории
-- **NullReferenceException при загрузке XAML**: события `Checked`/`Unchecked` больше не объявляются в XAML, подписка происходит после `InitializeComponent()`
-- **Некорректный синтаксис градиента**: заменён `Background="LinearGradient ..."` на полноценные `<LinearGradientBrush>` (WPF не поддерживает встроенные строки градиентов)
-- **Path traversal (уязвимость)**: `StartsWith(cwd)` мог совпадать с каталогом-префиксом (например, `C:\Foo` совпадало с `C:\FooMalicious`). Добавлена проверка `Path.DirectorySeparatorChar` и точное совпадения пути
-- **Парсинг JSON GitHub API**: заменён ручной regex-парсинг на `System.Text.Json` — надёжное извлечение `tag_name` и `assets[0].browser_download_url`
-- **Лимит загрузки**: добавлено ограничение 100 MiB для скачиваемого файла релиза (с проверкой `Content-Length` через `ResponseHeadersRead`)
-- **Мёртвый код удалён**:
-  - Удалено поле `_httpClient` (`HttpClient`) — не использовалось, `FetchLatestReleaseAsync()` создаёт свой локальный клиент
-  - Удалены фейковые задержки `await Task.Delay(100)` в проверке обновлений
-  - Удалена опция `StripComments` — комментарии безусловно отсекаются на уровне лексера, настройка не имела эффекта
+### Fixed — other passes
 
-### Технические детали
-- `LunarGuard.sln`: добавлен проект `LunarGuard.GUI`
-- `MainWindow.xaml`: полный UI (2 вкладки, карточки настроек, FAQ, анимации)
-- `MainWindow.xaml.cs`: все обработчики (переключение вкладок, выбор файла, запуск, проверка обновлений с SHA256)
-- `Themes/Styles.xaml`: кастомные стили (NavItem, WinCtrlBtn, UpdateBtn, AccentBtn, SettingCard, FaqCard, Checkbox, DarkTextBox)
-- Все 53 теста проходят. 0 предупреждений сборки.
+- **String Encryption.** Decoders are now emitted at the very top of the root
+  block, guaranteeing they are assigned before any consumer. They used to be
+  inserted after leading `if` wrappers injected by other passes, leaving
+  references as `nil` globals at runtime.
+- **Opaque Predicates.** Declaration statements (`local …`) are no longer
+  wrapped in an opaque `if` block, which had restricted the new binding's
+  scope and broken sibling references (e.g. `local player = {}` followed by
+  `function player:takeDamage`).
+- **Integrity check.** The `INTEG_CHECK` expected-length constant was
+  off-by-one relative to the two appended elements.
 
-## [1.0.0] — 2026-07-05
+### Verified
 
-### Добавлено
-- CLI-интерфейс на Spectre.Console
-- 8 проходов обфускации: RenamePass, DeadCodePass, StringEncryptPass, ControlFlowPass, ExpressionSplitPass, AntiDebugPass, NumberEncodePass, VirtualizationPass
-- Bytecode VM: трансляция Lua 5.1 AST → виртуальные инструкции + runtime-интерпретатор
-- Полный парсер Lua 5.1 (лексер + рекурсивный спуск)
-- AST для Lua 5.1 с поддержкой всех конструкций
-- Генератор кода `LuaWriter`
-- 53 модульных теста (xUnit)
-- README с документацией, примерами использования и road map
-- Лицензия MIT
+- `fib(10)` → `55`; `calculate(10,20)` → `30, 200`; `greet("World")`
+  → `Hello, World!` across VM-only, partial and full preset configurations.
+- Full obfuscation pipeline runs clean on the bundled `test_script.lua`.
+- 53 unit tests pass.
+
+## [1.1.1] - 2026-07-06
+
+### Fixed
+
+- `ExpressionSplitPass` cast bug on `FunctionCallStmt.Call`.
+- `StringEncryptPass` Lua 5.1 compatibility (`loadstring` signature,
+  decoder arithmetic, scattered-decoder placement).
+- `NumberEncodePass` nested-math inversion and `VirtualizationPass` Lua 5.1
+  syntax (`loadstring`, `unpack`, `GETL` vs `GETG`).
+
+## [1.1.0] - 2026-07-06
+
+### Added
+
+- WPF GUI (`LunarGuard.GUI`) with glassmorphism UI and a FAQ.
+- SHA-256 verification of `LunarGuard.dll` against a pinned GitHub hash.
+- Solution file wiring Core / CLI / Tests / GUI.

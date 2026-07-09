@@ -10,6 +10,18 @@ public class RenamePass : IObfuscationPass
 {
     public string Name => "Rename Variables";
 
+    // GameSense API globals — never rename these
+    private static readonly HashSet<string> GameSenseGlobals = new()
+    {
+        "client", "entity", "ui", "renderer", "globals", "bit", "json",
+        "database", "cvar", "config", "materialsystem", "panorama",
+        "engine", "input", "surface", "vgui", "filesystem", "http",
+        "lz4", "enums", "cheat", "eventlog", "playertags", "weapondata",
+        "aimbot", "triggerbot", "esp", "misc", "chams", "indicators",
+        "hitmarkers", "world", "logs", "notifications", "paint",
+        "screen", "fonts", "textures", "usercmd", "trace",
+    };
+
     private static readonly HashSet<string> Reserved = new()
     {
         "and", "break", "do", "else", "elseif", "end", "false", "for",
@@ -22,6 +34,12 @@ public class RenamePass : IObfuscationPass
         "unpack", "xpcall", "string", "table", "math", "io", "os", "debug",
         "coroutine", "utf8"
     };
+
+    static RenamePass()
+    {
+        foreach (var g in GameSenseGlobals)
+            Reserved.Add(g);
+    }
 
     private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();
     private readonly string _buildPrefix;
@@ -88,6 +106,7 @@ public class RenamePass : IObfuscationPass
             switch (stmt)
             {
                 case LocalVarStmt l:
+                    foreach (var v in l.Values) VisitExpr(v);
                     for (var i = 0; i < l.Names.Count; i++)
                     {
                         var name = l.Names[i];
@@ -96,23 +115,28 @@ public class RenamePass : IObfuscationPass
                         _localScopes.Peek().Add(name);
                         l.Names[i] = _renames[name];
                     }
-                    foreach (var v in l.Values) VisitExpr(v);
                     break;
 
                 case FunctionDeclStmt f:
-                    if (f.IsLocal && f.Name != null)
+                    // For LOCAL functions: add name to renames BEFORE visiting body
+                    // so recursive calls inside the body get renamed correctly
+                    if (f.IsLocal && f.Name != null && !Reserved.Contains(f.Name))
                     {
                         if (!_renames.ContainsKey(f.Name))
                             _renames[f.Name] = _nextName();
                         _localScopes.Peek().Add(f.Name);
-                        f.Name = _renames[f.Name];
+                        if (_renames.TryGetValue(f.Name, out var rn))
+                            f.Name = rn;
                     }
-                    else if (!f.IsMethod && f.Name != null && !char.IsUpper(f.Name[0]))
+                    else if (!f.IsMethod && f.Name != null && !char.IsUpper(f.Name[0]) && !Reserved.Contains(f.Name))
                     {
                         if (!_renames.ContainsKey(f.Name))
                             _renames[f.Name] = _nextName();
-                        f.Name = _renames[f.Name];
+                        if (_renames.TryGetValue(f.Name, out var rn))
+                            f.Name = rn;
                     }
+                    // Visit the body AFTER adding the function name (for recursion)
+                    VisitFuncDecl(f.FuncExpr);
                     if (f.NamePrefix != null && f.NamePrefix.Count > 0)
                     {
                         for (var i = 0; i < f.NamePrefix.Count; i++)
@@ -121,7 +145,6 @@ public class RenamePass : IObfuscationPass
                                 f.NamePrefix[i] = rn;
                         }
                     }
-                    VisitFuncDecl(f.FuncExpr);
                     break;
 
                 case AssignmentStmt a:

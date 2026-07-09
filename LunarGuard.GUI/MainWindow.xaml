@@ -301,6 +301,60 @@
                                     </Grid>
                                 </Border>
 
+                                <!-- AST Optimization -->
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="ChkOptimize" IsChecked="True"
+                                                  Style="{StaticResource SettingCheckbox}"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Оптимизация AST" FontSize="13"
+                                                       Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Сворачивание констант + DCE" FontSize="11"
+                                                       Foreground="#7FA4CF" Margin="0,1,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- String Splitting -->
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="ChkSplitStrings" IsChecked="True"
+                                                  Style="{StaticResource SettingCheckbox}"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Разбивка строк" FontSize="13"
+                                                       Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Разрезает строки на фрагменты" FontSize="11"
+                                                       Foreground="#7FA4CF" Margin="0,1,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Opaque Predicates -->
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="ChkOpaque" IsChecked="True"
+                                                  Style="{StaticResource SettingCheckbox}"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Непрозрачные предикаты" FontSize="13"
+                                                       Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Всегда-истинные условия ветвлений" FontSize="11"
+                                                       Foreground="#7FA4CF" Margin="0,1,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
                                 <!-- Anti Debug -->
                                 <Border Style="{StaticResource SettingCard}">
                                     <Grid>
@@ -316,6 +370,47 @@
                                             <TextBlock Text="Добавляет защиту от отладчиков" FontSize="11"
                                                        Foreground="#7FA4CF" Margin="0,1,0,0"/>
                                         </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Anti Tamper -->
+                                <Border Style="{StaticResource SettingCard}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <CheckBox x:Name="ChkAntiTamper" IsChecked="True"
+                                                  Style="{StaticResource SettingCheckbox}"/>
+                                        <StackPanel Grid.Column="1">
+                                            <TextBlock Text="Анти-подделка (Anti-Tamper)" FontSize="13"
+                                                       Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Проверка целостности кода при запуске" FontSize="11"
+                                                       Foreground="#7FA4CF" Margin="0,1,0,0"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Batch mode button row -->
+                                <Border CornerRadius="12" Background="#18061A3A"
+                                        BorderBrush="#1A006EFF" BorderThickness="1"
+                                        Padding="14,12" Margin="0,6,0,6">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
+                                            <TextBlock Text="Пакетная обработка" FontSize="13"
+                                                       Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                            <TextBlock Text="Обработать все .lua из папки" FontSize="11"
+                                                       Foreground="#7FA4CF" Margin="0,1,0,0"/>
+                                        </StackPanel>
+                                        <Button Grid.Column="1" x:Name="BrowseDirBtn"
+                                                Style="{StaticResource AccentBtnStyle}"
+                                                Content="Выбрать папку"
+                                                Click="BrowseDir_Click" Margin="0,0,8,0"/>
                                     </Grid>
                                 </Border>
 
@@ -607,12 +702,108 @@
                                             <StackPanel Grid.Column="1">
                                                 <TextBlock Text="Виртуализация" FontSize="14"
                                                            Foreground="#E2F0FD" FontWeight="SemiBold"/>
-                                                <TextBlock Text="Преобразует критически важные участки кода в виртуальные инструкции, которые выполняются встроенным интерпретатором. Обеспечивает наивысший уровень защиты." FontSize="12"
+                                                <TextBlock Text="Преобразует каждую функцию в собственную независимую виртуальную машину с уникальным набором инструкций и ключами шифрования. Обеспечивает наивысший уровень защиты." FontSize="12"
                                                            Foreground="#7FA4CF" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                             </StackPanel>
                                         </Grid>
                                         <Border CornerRadius="6" Background="#0AFFFFFF" Padding="10,8" Margin="0,10,0,0">
                                             <TextBlock Text="Внимание: Виртуализация значительно увеличивает размер кода и может снизить производительность. Используйте выборочно." FontSize="11"
+                                                       Foreground="#5A7FA4CF" TextWrapping="Wrap"/>
+                                        </Border>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource FaqCard}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                                    Background="#1A006EFF" BorderBrush="#30006EFF" BorderThickness="1"
+                                                    Margin="0,0,12,0">
+                                                <TextBlock Text="🧹" FontSize="14" Foreground="#00D2FF"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="Оптимизация AST" FontSize="14"
+                                                           Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                                <TextBlock Text="Выполняет сворачивание констант (1+1 → 2) и удаление мёртвого кода (if false then ... end → удаляется). Оптимизирует код перед обфускацией для более эффективного запутывания." FontSize="12"
+                                                           Foreground="#7FA4CF" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource FaqCard}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                                    Background="#1A006EFF" BorderBrush="#30006EFF" BorderThickness="1"
+                                                    Margin="0,0,12,0">
+                                                <TextBlock Text="✂" FontSize="14" Foreground="#00D2FF"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="Разбивка строк" FontSize="14"
+                                                           Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                                <TextBlock Text="Разрезает длинные строки на фрагменты (по 2-5 символов) и собирает их через конкатенацию. Затрудняет поиск строк в скомпилированном коде." FontSize="12"
+                                                           Foreground="#7FA4CF" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource FaqCard}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                                    Background="#1A006EFF" BorderBrush="#30006EFF" BorderThickness="1"
+                                                    Margin="0,0,12,0">
+                                                <TextBlock Text="🎭" FontSize="14" Foreground="#00D2FF"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="Непрозрачные предикаты" FontSize="14"
+                                                           Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                                <TextBlock Text="Оборачивает код в условия, которые всегда истинны (например 1+1==2). Усложняет статический анализ, заставляя анализаторы разбирать ложные ветвления." FontSize="12"
+                                                           Foreground="#7FA4CF" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+
+                                <Border Style="{StaticResource FaqCard}">
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Width="32" Height="32" CornerRadius="8"
+                                                    Background="#1A006EFF" BorderBrush="#30006EFF" BorderThickness="1"
+                                                    Margin="0,0,12,0">
+                                                <TextBlock Text="🛡" FontSize="14" Foreground="#00D2FF"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="Анти-подделка (Anti-Tamper)" FontSize="14"
+                                                           Foreground="#E2F0FD" FontWeight="SemiBold"/>
+                                                <TextBlock Text="Встраивает в скрипт проверку целостности кода. Если кто-то изменит obfuscated.lua после генерации, скрипт выдаст ошибку при запуске. Защищает от модификации." FontSize="12"
+                                                           Foreground="#7FA4CF" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <Border CornerRadius="6" Background="#0AFFFFFF" Padding="10,8" Margin="0,10,0,0">
+                                            <TextBlock Text="Внимание: Anti-Tamper использует loadstring для проверки. Если среда выполнения запрещает loadstring (например, в некоторых sandbox), эта опция не сработает." FontSize="11"
                                                        Foreground="#5A7FA4CF" TextWrapping="Wrap"/>
                                         </Border>
                                     </StackPanel>

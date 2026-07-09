@@ -205,11 +205,13 @@ public class Lexer
             }
         }
         var numStr = _source[_start.._current];
-        var numVal = isHex
-            ? long.Parse(numStr[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
-            : numStr.Contains('.') || numStr.Contains('e') || numStr.Contains('E')
-                ? double.Parse(numStr, CultureInfo.InvariantCulture)
-                : long.Parse(numStr, CultureInfo.InvariantCulture);
+        object numVal;
+        if (isHex)
+            numVal = long.Parse(numStr[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        else if (numStr.Contains('.') || numStr.Contains('e') || numStr.Contains('E'))
+            numVal = double.Parse(numStr, CultureInfo.InvariantCulture);
+        else
+            numVal = long.Parse(numStr, CultureInfo.InvariantCulture);
         return Make(TokenType.Number, numVal);
     }
 
