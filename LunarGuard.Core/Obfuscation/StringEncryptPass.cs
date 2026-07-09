@@ -20,7 +20,7 @@ public class StringEncryptPass : IObfuscationPass
 
         var stringMap = new Dictionary<string, string>();
         CollectStrings(root, stringMap);
-        var distinct = stringMap.Keys.Where(s => s.Length > 1).Distinct().ToList();
+        var distinct = stringMap.Keys.Where(s => s.Length > 0).Distinct().ToList();
         if (distinct.Count == 0) return;
 
         _scatteredDecoders.Clear();
@@ -34,7 +34,6 @@ public class StringEncryptPass : IObfuscationPass
             _scatteredDecoders.Add(decoder);
         }
 
-        // Scatter decoders throughout the root block (not all at top)
         ScatterDecoders(root);
 
         ReplaceStrings(root, stringMap);
@@ -42,8 +41,6 @@ public class StringEncryptPass : IObfuscationPass
 
     private void ScatterDecoders(BlockStmt root)
     {
-        // Must insert decoders BEFORE any statement that uses them.
-        // Just insert all at the start of the root block (after anti-debug).
         var insertAt = 0;
         for (var i = 0; i < root.Statements.Count; i++)
         {
@@ -61,17 +58,19 @@ public class StringEncryptPass : IObfuscationPass
 
     private Statement MakeScatteredDecoder(string original, string varName)
     {
-        // Each string gets its OWN unique decoder with varying algorithm
-        var buf = new byte[1];
+        var buf = new byte[2];
         _rng.GetBytes(buf);
-        var algo = buf[0] % 4;
+        var algo = buf[0] % 7;
 
         return algo switch
         {
             0 => MakeXorDecoder(original, varName),
             1 => MakeOffsetDecoder(original, varName),
             2 => MakeTableDecoder(original, varName),
-            _ => MakeArithDecoder(original, varName),
+            3 => MakeArithDecoder(original, varName),
+            4 => MakeShiftDecoder(original, varName),
+            5 => MakeKeyedXorDecoder(original, varName),
+            _ => MakePolyDecoder(original, varName),
         };
     }
 
@@ -280,6 +279,264 @@ public class StringEncryptPass : IObfuscationPass
                                 new IndexExpr(new VarExpr("d"), new VarExpr("i")),
                                 new LiteralExpr(LiteralExpr.LiteralKind.Number, key))
                         }
+                    })
+            }
+        });
+
+        body.Statements.Add(new ForNumericStmt
+        {
+            VarName = "i",
+            Start = new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L),
+            End = new UnaryExpr(UnaryOp.Length, new VarExpr("d")),
+            Body = forBody
+        });
+        body.Statements.Add(new ReturnStmt { Values = { new VarExpr("r") } });
+
+        var funcExpr = new FuncDeclExpr
+        {
+            Parameters = { "d" },
+            Body = body
+        };
+
+        var encTable = new TableConstructorExpr();
+        foreach (var v in encoded)
+            encTable.Fields.Add(new TableField
+            {
+                Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
+            });
+
+        var callExpr = new FunctionCallExpr(funcExpr)
+        {
+            Arguments = { encTable }
+        };
+
+        return new LocalVarStmt
+        {
+            Names = { varName },
+            Values = { callExpr }
+        };
+    }
+
+    private Statement MakeShiftDecoder(string original, string varName)
+    {
+        var key = new byte[4];
+        _rng.GetBytes(key);
+        var shiftKey = ((BitConverter.ToInt32(key, 0) & 0x7FFFFFFF) % 7) + 1;
+
+        var encoded = new List<long>();
+        foreach (var c in original)
+            encoded.Add(c << shiftKey);
+
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "r" },
+            Values = { new LiteralExpr(LiteralExpr.LiteralKind.String, "") }
+        });
+
+        var forBody = new BlockStmt();
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("r") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Concat,
+                    new VarExpr("r"),
+                    new FunctionCallExpr(new VarExpr("string.char"))
+                    {
+                        Arguments =
+                        {
+                            new BinaryExpr(BinaryOp.Divide,
+                                new IndexExpr(new VarExpr("d"), new VarExpr("i")),
+                                new LiteralExpr(LiteralExpr.LiteralKind.Number, (double)(1L << shiftKey)))
+                        }
+                    })
+            }
+        });
+
+        body.Statements.Add(new ForNumericStmt
+        {
+            VarName = "i",
+            Start = new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L),
+            End = new UnaryExpr(UnaryOp.Length, new VarExpr("d")),
+            Body = forBody
+        });
+        body.Statements.Add(new ReturnStmt { Values = { new VarExpr("r") } });
+
+        var funcExpr = new FuncDeclExpr
+        {
+            Parameters = { "d" },
+            Body = body
+        };
+
+        var encTable = new TableConstructorExpr();
+        foreach (var v in encoded)
+            encTable.Fields.Add(new TableField
+            {
+                Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
+            });
+
+        var callExpr = new FunctionCallExpr(funcExpr)
+        {
+            Arguments = { encTable }
+        };
+
+        return new LocalVarStmt
+        {
+            Names = { varName },
+            Values = { callExpr }
+        };
+    }
+
+    private Statement MakeKeyedXorDecoder(string original, string varName)
+    {
+        var keyBuf = new byte[16];
+        _rng.GetBytes(keyBuf);
+        var key = Convert.ToHexString(keyBuf).ToLower();
+
+        var encoded = new List<long>();
+        for (var i = 0; i < original.Length; i++)
+            encoded.Add(original[i] ^ key[i % key.Length]);
+
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "r", "k" },
+            Values =
+            {
+                new LiteralExpr(LiteralExpr.LiteralKind.String, ""),
+                new LiteralExpr(LiteralExpr.LiteralKind.String, key)
+            }
+        });
+
+        var forBody = new BlockStmt();
+        var keyChar = new FunctionCallExpr(new VarExpr("string.byte"))
+        {
+            Arguments =
+            {
+                new VarExpr("k"),
+                new BinaryExpr(BinaryOp.Add,
+                    new BinaryExpr(BinaryOp.Modulo,
+                        new BinaryExpr(BinaryOp.Subtract, new VarExpr("i"), new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L)),
+                        new UnaryExpr(UnaryOp.Length, new VarExpr("k"))),
+                    new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L))
+            }
+        };
+
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("r") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Concat,
+                    new VarExpr("r"),
+                    new FunctionCallExpr(new VarExpr("string.char"))
+                    {
+                        Arguments =
+                        {
+                            new BinaryExpr(BinaryOp.Subtract,
+                                new IndexExpr(new VarExpr("d"), new VarExpr("i")),
+                                keyChar)
+                        }
+                    })
+            }
+        });
+
+        body.Statements.Add(new ForNumericStmt
+        {
+            VarName = "i",
+            Start = new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L),
+            End = new UnaryExpr(UnaryOp.Length, new VarExpr("d")),
+            Body = forBody
+        });
+        body.Statements.Add(new ReturnStmt { Values = { new VarExpr("r") } });
+
+        var funcExpr = new FuncDeclExpr
+        {
+            Parameters = { "d" },
+            Body = body
+        };
+
+        var encTable = new TableConstructorExpr();
+        foreach (var v in encoded)
+            encTable.Fields.Add(new TableField
+            {
+                Value = new LiteralExpr(LiteralExpr.LiteralKind.Number, v)
+            });
+
+        var callExpr = new FunctionCallExpr(funcExpr)
+        {
+            Arguments = { encTable }
+        };
+
+        return new LocalVarStmt
+        {
+            Names = { varName },
+            Values = { callExpr }
+        };
+    }
+
+    private Statement MakePolyDecoder(string original, string varName)
+    {
+        var key = new byte[4];
+        _rng.GetBytes(key);
+        var a = ((BitConverter.ToInt32(key, 0) & 0x7FFFFFFF) % 50) + 10;
+        var b = 1;
+
+        var encoded = new List<long>();
+        var poly = a;
+        foreach (var c in original)
+        {
+            encoded.Add((byte)((c + poly) & 0xFF));
+            poly = (poly * a + b) & 0xFF;
+        }
+
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { "r", "p" },
+            Values =
+            {
+                new LiteralExpr(LiteralExpr.LiteralKind.String, ""),
+                new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)a)
+            }
+        });
+
+        var forBody = new BlockStmt();
+        forBody.Statements.Add(new LocalVarStmt
+        {
+            Names = { "c" },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Modulo,
+                    new BinaryExpr(BinaryOp.Subtract,
+                        new IndexExpr(new VarExpr("d"), new VarExpr("i")),
+                        new VarExpr("p")),
+                    new LiteralExpr(LiteralExpr.LiteralKind.Number, 256L))
+            }
+        });
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("p") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Modulo,
+                    new BinaryExpr(BinaryOp.Add,
+                        new BinaryExpr(BinaryOp.Multiply, new VarExpr("p"), new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)a)),
+                        new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)b)),
+                    new LiteralExpr(LiteralExpr.LiteralKind.Number, 256L))
+            }
+        });
+        forBody.Statements.Add(new AssignmentStmt
+        {
+            Targets = { new VarExpr("r") },
+            Values =
+            {
+                new BinaryExpr(BinaryOp.Concat,
+                    new VarExpr("r"),
+                    new FunctionCallExpr(new VarExpr("string.char"))
+                    {
+                        Arguments = { new VarExpr("c") }
                     })
             }
         });

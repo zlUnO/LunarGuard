@@ -15,15 +15,12 @@ public class AntiDebugPass : IObfuscationPass
 
         using var rng = RandomNumberGenerator.Create();
 
-        // Scatter multiple small anti-debug checks throughout the code
-        // These are in addition to what's integrated into the VM
         var checkPoints = FindCheckPoints(root, 3);
         foreach (var idx in checkPoints)
         {
             root.Statements.Insert(idx, CreateAntiDebugChunk(rng));
         }
 
-        // Also add one at the very beginning
         root.Statements.Insert(0, CreateAntiDebugChunk(rng));
     }
 
@@ -56,36 +53,176 @@ public class AntiDebugPass : IObfuscationPass
     {
         var buf = new byte[8];
         rng.GetBytes(buf);
-        var falseTarget = BitConverter.ToInt32(buf, 0) & 0x7FFFFFFF;
-        var branchVar = $"_{BitConverter.ToInt32(buf, 4):x8}";
+        var checkType = buf[0] % 3;
 
-        // debug.getinfo(0) == nil -> debug is hooked -> os.exit(1)
-        var cond = new BinaryExpr(BinaryOp.Eq,
-            new FunctionCallExpr(new MemberExpr(new VarExpr("debug"), "getinfo"))
+        var chunkName = $"_{BitConverter.ToInt32(buf, 4):x8}";
+
+        return checkType switch
+        {
+            0 => CreateTimingCheck(rng, chunkName),
+            1 => CreateFunctionHookCheck(rng, chunkName),
+            _ => CreatePcallCheck(rng, chunkName),
+        };
+    }
+
+    private static Statement CreateTimingCheck(RandomNumberGenerator rng, string name)
+    {
+        var buf = new byte[4];
+        rng.GetBytes(buf);
+
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { $"t_{name}" },
+            Values = { new FunctionCallExpr(new VarExpr("os.clock")) { Arguments = {} } }
+        });
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { $"_{name}" },
+            Values =
             {
-                Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, 0L) }
-            },
-            new LiteralExpr(LiteralExpr.LiteralKind.Nil, null));
-
-        return new IfStmt
+                new BinaryExpr(BinaryOp.Gt,
+                    new BinaryExpr(BinaryOp.Subtract,
+                        new FunctionCallExpr(new VarExpr("os.clock")) { Arguments = {} },
+                        new VarExpr($"t_{name}")),
+                    new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L))
+            }
+        });
+        body.Statements.Add(new IfStmt
         {
             Branches =
             {
                 (
-                    cond,
+                    new VarExpr($"_{name}"),
                     new BlockStmt
                     {
                         Statements =
                         {
                             new FunctionCallStmt
                             {
-                                Call = new FunctionCallExpr(new MemberExpr(new VarExpr("os"), "exit"))
+                                Call = new FunctionCallExpr(new VarExpr("error"))
                                 {
-                                    Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, 1L) }
+                                    Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.String, "timeout") }
                                 }
                             }
                         }
                     }
+                )
+            }
+        });
+
+        return new DoStmt { Body = body };
+    }
+
+    private static Statement CreateFunctionHookCheck(RandomNumberGenerator rng, string name)
+    {
+        var buf = new byte[8];
+        rng.GetBytes(buf);
+        var checkVal = BitConverter.ToInt32(buf, 0) & 0x7FFFFF;
+
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { $"f_{name}" },
+            Values = { new VarExpr("print") }
+        });
+        body.Statements.Add(new IfStmt
+        {
+            Branches =
+            {
+                (
+                    new BinaryExpr(BinaryOp.Neq,
+                        new VarExpr($"f_{name}"),
+                        new VarExpr("print")),
+                    new BlockStmt
+                    {
+                        Statements =
+                        {
+                            new FunctionCallStmt
+                            {
+                                Call = new FunctionCallExpr(new VarExpr("error"))
+                                {
+                                    Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.String, "hook") }
+                                }
+                            }
+                        }
+                    }
+                )
+            }
+        });
+
+        return new DoStmt { Body = body };
+    }
+
+    private static Statement CreatePcallCheck(RandomNumberGenerator rng, string name)
+    {
+        var buf = new byte[4];
+        rng.GetBytes(buf);
+        var flagVal = BitConverter.ToInt32(buf, 0) & 0xFFFFFF;
+
+        var body = new BlockStmt();
+        body.Statements.Add(new LocalVarStmt
+        {
+            Names = { $"ok_{name}", $"err_{name}" },
+            Values =
+            {
+                new FunctionCallExpr(new MemberExpr(
+                    new FunctionCallExpr(new VarExpr("pcall"))
+                    {
+                        Arguments =
+                        {
+                            new FuncDeclExpr
+                            {
+                                Body = new BlockStmt
+                                {
+                                    Statements =
+                                    {
+                                        new ReturnStmt
+                                        {
+                                            Values = { new LiteralExpr(LiteralExpr.LiteralKind.Boolean, true) }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }, "and"))
+                {
+                    Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Boolean, false) }
+                }
+            }
+        });
+
+        return new DoStmt { Body = body };
+    }
+
+    private static Statement CheckDebugExist(RandomNumberGenerator rng)
+    {
+        return new IfStmt
+        {
+            Branches =
+            {
+                (
+                    new FunctionCallExpr(new VarExpr("pcall"))
+                    {
+                        Arguments =
+                        {
+                            new FuncDeclExpr
+                            {
+                                Body = new BlockStmt
+                                {
+                                    Statements =
+                                    {
+                                        new LocalVarStmt
+                                        {
+                                            Names = { "d" },
+                                            Values = { new VarExpr("debug") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    new BlockStmt()
                 )
             }
         };

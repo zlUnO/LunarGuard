@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using LunarGuard.Core.AST;
 using LunarGuard.Core.AST.Stmt;
 using LunarGuard.Core.AST.Expr;
@@ -12,7 +13,7 @@ public class DeadCodePass : IObfuscationPass
     {
         if (!options.InjectDeadCode) return;
 
-        var rng = new Random(Environment.TickCount);
+        var rng = new Random(Environment.TickCount ^ Environment.CurrentManagedThreadId);
         Inject(root, options.DeadCodeBlocks, rng);
     }
 
@@ -71,7 +72,9 @@ public class DeadCodePass : IObfuscationPass
 
     private static Statement GenerateJunk(Random rng)
     {
-        switch (rng.Next(8))
+        var variant = rng.Next(12);
+
+        switch (variant)
         {
             case 0:
             {
@@ -161,18 +164,91 @@ public class DeadCodePass : IObfuscationPass
                     Values = { MakeJunkExpr(rng) }
                 };
             }
-            default:
+            case 7:
+                return new WhileStmt
+                {
+                    Condition = new LiteralExpr(LiteralExpr.LiteralKind.Boolean, false),
+                    Body = new BlockStmt
+                    {
+                        Statements =
+                        {
+                            new FunctionCallStmt
+                            {
+                                Call = new FunctionCallExpr(new VarExpr("print"))
+                                {
+                                    Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.String, $"_{rng.Next():x8}") }
+                                }
+                            }
+                        }
+                    }
+                };
+            case 8:
+                return new RepeatStmt
+                {
+                    Condition = new LiteralExpr(LiteralExpr.LiteralKind.Boolean, true),
+                    Body = new BlockStmt
+                    {
+                        Statements =
+                        {
+                            new LocalVarStmt
+                            {
+                                Names = { $"_{rng.Next():x8}" },
+                                Values = { MakeJunkExpr(rng) }
+                            }
+                        }
+                    }
+                };
+            case 9:
+            {
+                var name = $"_{rng.Next():x8}";
+                var val = rng.Next(1, 999);
                 return new LocalVarStmt
                 {
-                    Names = { $"_{rng.Next():x8}" },
+                    Names = { name },
+                    Values =
+                    {
+                        new BinaryExpr(
+                            BinaryOp.Eq,
+                            new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)val),
+                            new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)val))
+                    }
+                };
+            }
+            case 10:
+                return new IfStmt
+                {
+                    Branches =
+                    {
+                        (MakeJunkExpr(rng),
+                         new BlockStmt())
+                    },
+                    ElseBody = new BlockStmt
+                    {
+                        Statements =
+                        {
+                            new LocalVarStmt
+                            {
+                                Names = { $"_{rng.Next():x8}" },
+                                Values = { MakeJunkExpr(rng) }
+                            }
+                        }
+                    }
+                };
+            default:
+            {
+                var name = $"_{rng.Next():x8}";
+                return new LocalVarStmt
+                {
+                    Names = { name },
                     Values = { MakeJunkExpr(rng) }
                 };
+            }
         }
     }
 
     private static Expression MakeJunkExpr(Random rng)
     {
-        return rng.Next(5) switch
+        return rng.Next(8) switch
         {
             0 => new BinaryExpr(
                 BinaryOp.Add,
@@ -193,6 +269,20 @@ public class DeadCodePass : IObfuscationPass
                 new LiteralExpr(LiteralExpr.LiteralKind.String, $"junk_{rng.Next():x8}"),
                 new LiteralExpr(LiteralExpr.LiteralKind.String, $"_{rng.Next():x4}")
             ),
+            4 => new BinaryExpr(
+                BinaryOp.Modulo,
+                new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)rng.Next(10, 1000)),
+                new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)rng.Next(2, 99))
+            ),
+            5 => new BinaryExpr(
+                BinaryOp.Subtract,
+                new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)rng.Next(500, 999)),
+                new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)rng.Next(1, 499))
+            ),
+            6 => new FunctionCallExpr(new VarExpr("tostring"))
+            {
+                Arguments = { new LiteralExpr(LiteralExpr.LiteralKind.Number, (long)rng.Next(1, 9999)) }
+            },
             _ => new LiteralExpr(
                 LiteralExpr.LiteralKind.String,
                 $"junk_{rng.Next():x8}"

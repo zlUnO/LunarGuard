@@ -9,6 +9,18 @@ namespace LunarGuard.Core;
 
 public class LunarGuardProcessor
 {
+    private static readonly Dictionary<string, Type> KnownPasses = new()
+    {
+        ["Rename Variables"] = typeof(RenamePass),
+        ["Dead Code Injection"] = typeof(DeadCodePass),
+        ["String Encryption"] = typeof(StringEncryptPass),
+        ["Control Flow"] = typeof(ControlFlowPass),
+        ["Expression Split"] = typeof(ExpressionSplitPass),
+        ["Anti-Debug"] = typeof(AntiDebugPass),
+        ["Number Encoding"] = typeof(NumberEncodePass),
+        ["Bytecode Virtualization"] = typeof(VirtualizationPass),
+    };
+
     public string Process(string source, ObfuscationOptions? options = null)
     {
         options ??= new ObfuscationOptions();
@@ -21,17 +33,12 @@ public class LunarGuardProcessor
         var root = new BlockStmt();
         root.Statements.AddRange(stmts);
 
-        var pm = new PassManager();
-        pm.Register(new RenamePass());
-        pm.Register(new DeadCodePass());
-        pm.Register(new StringEncryptPass());
-        pm.Register(new ControlFlowPass());
-        pm.Register(new ExpressionSplitPass());
-        pm.Register(new AntiDebugPass());
-        pm.Register(new NumberEncodePass());
-        pm.Register(new VirtualizationPass());
+        var pm = BuildPassManager(options);
 
-        pm.RunAll(root, options);
+        if (options.PassOrder != null && options.PassOrder.Count > 0)
+            pm.RunOrdered(root, options, options.PassOrder);
+        else
+            pm.RunAll(root, options);
 
         var writer = new LuaWriter();
         return writer.Write(root);
@@ -55,4 +62,20 @@ public class LunarGuardProcessor
         File.WriteAllText(outputFull, result);
         return outputFull;
     }
+
+    public PassManager BuildPassManager(ObfuscationOptions options)
+    {
+        var pm = new PassManager();
+        pm.Register(new RenamePass());
+        pm.Register(new DeadCodePass());
+        pm.Register(new StringEncryptPass());
+        pm.Register(new ControlFlowPass());
+        pm.Register(new ExpressionSplitPass());
+        pm.Register(new AntiDebugPass());
+        pm.Register(new NumberEncodePass());
+        pm.Register(new VirtualizationPass());
+        return pm;
+    }
+
+    public static List<string> GetPassNames() => KnownPasses.Keys.ToList();
 }

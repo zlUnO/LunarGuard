@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>LunarGuard</AssemblyName>
+    <Version>1.2.0</Version>
+    <FileVersion>1.2.0.0</FileVersion>
+    <Description>LunarGuard Lua Obfuscator v1.2.0</Description>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\LunarGuard.Core\LunarGuard.Core.csproj" />

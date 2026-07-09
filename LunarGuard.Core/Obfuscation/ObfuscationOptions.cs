@@ -14,4 +14,6 @@ public class ObfuscationOptions
     public string StringKey { get; set; } = "lx9zq4k7";
     public int DeadCodeBlocks { get; set; } = 5;
     public string RenamePrefix { get; set; } = "";
+
+    public List<string>? PassOrder { get; set; }
 }

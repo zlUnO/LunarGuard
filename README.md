@@ -20,11 +20,11 @@ The project was made entirely with the help of AI
 | Variable Renaming | Renames locals to unreadable hex identifiers | ✅ |
 | String Encryption | Encrypts string literals with dynamic runtime decryption via `load()` | ✅ |
 | Number Encoding | Obfuscates numeric literals using arithmetic expressions (add/sub, mul/div, nested) | ✅ |
-| Dead Code Injection | Injects unreachable junk statements (8 templates, 5 junk expression forms) | ✅ |
+| Dead Code Injection | Injects unreachable junk statements (12 templates, 7 junk expression forms) | ✅ |
 | Control Flow Obfuscation | Wraps statements in opaque predicates and nested `do` blocks | ✅ |
 | Expression Splitting | Splits complex expressions into temp local variables | ✅ |
-| Anti-Debug | Two-layer debug detection (library presence + `debug.getinfo` detour check) | ✅ |
-| Bytecode Virtualization | Converts code to custom VM bytecode with runtime interpreter | ✅ |
+| Anti-Debug | Safe debug detection for GameSense (no `debug` library required) | ✅ |
+| Bytecode Virtualization | Full Lua 5.1 VM with ForGeneric, Repeat, Do, register allocation, upvalue proxy | ✅ |
 
 ## Prerequisites
 

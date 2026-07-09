@@ -20,7 +20,18 @@ public class RenamePass : IObfuscationPass
         "next", "pairs", "pcall", "print", "rawequal", "rawget", "rawlen",
         "rawset", "select", "setmetatable", "tonumber", "tostring", "type",
         "unpack", "xpcall", "string", "table", "math", "io", "os", "debug",
-        "coroutine", "utf8"
+        "coroutine", "utf8",
+        "client", "entity", "ui", "renderer", "globals", "bit", "json",
+        "database", "cvar", "config", "materialsystem", "panorama",
+        "engine", "input", "surface", "vgui", "net", "filesystem",
+        "keyvalues", "steam", "http", "chat", "console", "event",
+        "entitylist", "globalvars", "inputsystem",
+        "client_state", "engineclient", "enginevgui",
+        "localize", "movedata", "physenv", "playerinfomanager",
+        "prediction", "sound", "steamworks", "tier0", "vphysics",
+        "gameeventmanager", "inputinternal",
+        "cheat", "game", "menu", "notification", "log",
+        "usercmd", "bsp", "trace", "concommand"
     };
 
     private readonly RandomNumberGenerator _rng = RandomNumberGenerator.Create();

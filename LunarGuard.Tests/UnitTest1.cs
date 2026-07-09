@@ -709,4 +709,482 @@ public class ObfuscationPassTests
         var code = writer.Write(root);
         Assert.NotEmpty(code);
     }
+
+    // ── VirtualizationPass Extended ────────────────────────────
+
+    [Fact]
+    public void VirtualizationPass_HandlesForGenericStmt()
+    {
+        var root = Parse("for k,v in pairs({a=1}) do print(k,v) end");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+        var code = Write(root);
+        Assert.Contains("loadstring", code);
+    }
+
+    [Fact]
+    public void VirtualizationPass_HandlesRepeatStmt()
+    {
+        var root = Parse("local x = 1; repeat x = x + 1 until x > 10");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+        var code = Write(root);
+        Assert.Contains("loadstring", code);
+    }
+
+    [Fact]
+    public void VirtualizationPass_HandlesDoStmt()
+    {
+        var root = Parse("do local x = 1 end");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void VirtualizationPass_SkipsNestedFunctions()
+    {
+        var root = Parse("function outer() local x = 1; function inner() print(x) end end");
+        var originalStmtCount = root.Statements.Count;
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void VirtualizationPass_HandlesForNumericWithStep()
+    {
+        var root = Parse("for i = 1, 10, 2 do print(i) end");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void VirtualizationPass_HandlesIfElseIf()
+    {
+        var root = Parse("if x == 1 then print(1) elseif x == 2 then print(2) else print(3) end");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void VirtualizationPass_HandlesNestedWhile()
+    {
+        var root = Parse("while true do while false do print(1) end end");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void VirtualizationPass_HandlesTableConstructors()
+    {
+        var root = Parse("local t = {a = 1, [2] = \"two\", 3, 4, 5}");
+        var pass = new VirtualizationPass();
+        var opts = AllDisabled();
+        opts.Virtualize = true;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+    }
+
+    // ── GameSense Compatibility ─────────────────────────────
+
+    [Fact]
+    public void RenamePass_PreservesGameSenseGlobals()
+    {
+        var root = Parse("client.set_event_callback(\"paint\", function() end)");
+        var pass = new RenamePass();
+        var opts = AllDisabled();
+        opts.RenameVariables = true;
+        pass.Transform(root, opts);
+        var code = Write(root);
+        Assert.Contains("client", code);
+        Assert.Contains("set_event_callback", code);
+    }
+
+    [Fact]
+    public void RenamePass_PreservesEntityAndUi()
+    {
+        var root = Parse("entity.get_all(\"CCSPlayer\"); ui.new_checkbox(\"Test\", \"test\")");
+        var pass = new RenamePass();
+        var opts = AllDisabled();
+        opts.RenameVariables = true;
+        pass.Transform(root, opts);
+        var code = Write(root);
+        Assert.Contains("entity.get_all", code);
+        Assert.Contains("ui.new_checkbox", code);
+    }
+
+    // ── Configurable Pipeline ────────────────────────────────
+
+    [Fact]
+    public void PassManager_OrderedExecution_NoCrash()
+    {
+        var root = Parse("local x = 42; print(x)");
+        var pm = new PassManager();
+        pm.Register(new RenamePass());
+        pm.Register(new DeadCodePass());
+        pm.Register(new NumberEncodePass());
+
+        var opts = new ObfuscationOptions
+        {
+            RenameVariables = true,
+            InjectDeadCode = false,
+            EncodeNumbers = true,
+            EncryptStrings = false,
+            ObfuscateControlFlow = false,
+            SplitExpressions = false,
+            AntiDebug = false,
+            Virtualize = false
+        };
+
+        var order = new List<string> { "Number Encoding", "Rename Variables" };
+        var ex = Record.Exception(() => pm.RunOrdered(root, opts, order));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void LunarGuardProcessor_BuildPassManager_ContainsAllPasses()
+    {
+        var processor = new LunarGuardProcessor();
+        var names = LunarGuardProcessor.GetPassNames();
+        Assert.Contains("Rename Variables", names);
+        Assert.Contains("Dead Code Injection", names);
+        Assert.Contains("String Encryption", names);
+        Assert.Contains("Control Flow", names);
+        Assert.Contains("Expression Split", names);
+        Assert.Contains("Anti-Debug", names);
+        Assert.Contains("Number Encoding", names);
+        Assert.Contains("Bytecode Virtualization", names);
+    }
+
+    // ── GameSense Script Integration ─────────────────────────
+
+    [Fact]
+    public void FullPipeline_GameSenseScript_NoCrash()
+    {
+        var src = """
+            local function on_paint()
+                local players = entity.get_all("CCSPlayer")
+                for i, player in ipairs(players) do
+                    if player ~= nil then
+                        local hp = player:m_iHealth()
+                        if hp > 0 then
+                            renderer.text(player:get_origin(), tostring(hp))
+                        end
+                    end
+                end
+            end
+
+            client.set_event_callback("paint", on_paint)
+            """;
+        var processor = new LunarGuardProcessor();
+        var ex = Record.Exception(() => processor.Process(src));
+        Assert.Null(ex);
+        var result = processor.Process(src);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void FullPipeline_ForGenericStmt_NoCrash()
+    {
+        var src = """
+            for k, v in pairs({a = 1, b = 2}) do
+                print(k, v)
+            end
+            """;
+        var processor = new LunarGuardProcessor();
+        var result = processor.Process(src);
+        Assert.NotNull(result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void FullPipeline_RepeatUntil_NoCrash()
+    {
+        var src = """
+            local x = 0
+            repeat
+                x = x + 1
+                print(x)
+            until x >= 5
+            """;
+        var processor = new LunarGuardProcessor();
+        var result = processor.Process(src);
+        Assert.NotNull(result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void FullPipeline_ComplexLua_NoCrash()
+    {
+        var src = """
+            local t = {1, 2, 3, 4, 5}
+            local sum = 0
+            for i = 1, #t do
+                sum = sum + t[i]
+            end
+            print("sum: " .. tostring(sum))
+
+            local function factorial(n)
+                if n <= 1 then
+                    return 1
+                end
+                return n * factorial(n - 1)
+            end
+
+            print(factorial(5))
+            """;
+        var processor = new LunarGuardProcessor();
+        var result = processor.Process(src);
+        Assert.NotNull(result);
+        Assert.NotEmpty(result);
+    }
+
+    [Fact]
+    public void FullPipeline_WithVirtualizeAndGameSense_NoCrash()
+    {
+        var src = """
+            local function process_players()
+                for i, player in ipairs(entity.get_all("CCSPlayer")) do
+                    if player:is_alive() then
+                        local pos = player:get_origin()
+                        renderer.circle(pos, 10, 255, 0, 0, 255)
+                    end
+                end
+            end
+
+            client.set_event_callback("paint", process_players)
+            """;
+        var processor = new LunarGuardProcessor();
+        var ex = Record.Exception(() => processor.Process(src));
+        Assert.Null(ex);
+    }
+
+    // ── AntiDebug ────────────────────────────────────────────
+
+    [Fact]
+    public void AntiDebugPass_NoDebugReference()
+    {
+        var root = Parse("local x = 1");
+        var pass = new AntiDebugPass();
+        var opts = AllDisabled();
+        opts.AntiDebug = true;
+        pass.Transform(root, opts);
+        var code = Write(root);
+        Assert.DoesNotContain("debug", code);
+    }
+
+    [Fact]
+    public void AntiDebugPass_UsesSafeChecks()
+    {
+        var root = Parse("local x = 1");
+        var pass = new AntiDebugPass();
+        var opts = AllDisabled();
+        opts.AntiDebug = true;
+        pass.Transform(root, opts);
+        var code = Write(root);
+        Assert.DoesNotContain("debug", code);
+        Assert.Contains("do", code);
+        Assert.True(code.Contains("os.clock") || code.Contains("pcall") || code.Contains("print"));
+    }
+
+    // ── Dead Code Pass ───────────────────────────────────────
+
+    [Fact]
+    public void DeadCodePass_NewPatterns_NoCrash()
+    {
+        var root = Parse("local x = 1; local y = 2; print(x + y)");
+        var pass = new DeadCodePass();
+        var opts = AllDisabled();
+        opts.InjectDeadCode = true;
+        opts.DeadCodeBlocks = 10;
+        var ex = Record.Exception(() => pass.Transform(root, opts));
+        Assert.Null(ex);
+        var code = Write(root);
+        Assert.NotEmpty(code);
+    }
+
+    [Fact]
+    public void DeadCodePass_InjectsInAllStatementTypes()
+    {
+        var root = Parse("""
+            if true then print(1) end
+            while false do print(2) end
+            repeat print(3) until true
+            do print(4) end
+            for i = 1, 5 do print(i) end
+            """);
+        var before = Write(root);
+        var pass = new DeadCodePass();
+        var opts = AllDisabled();
+        opts.InjectDeadCode = true;
+        opts.DeadCodeBlocks = 15;
+        pass.Transform(root, opts);
+        var after = Write(root);
+        Assert.True(after.Length > before.Length);
+    }
+
+    // ── StringEncrypt Extended ───────────────────────────────
+
+    [Fact]
+    public void StringEncryptPass_SingleCharStrings()
+    {
+        var root = Parse(@"local a = ""x""; local b = ""y""");
+        var pass = new StringEncryptPass();
+        var opts = AllDisabled();
+        opts.EncryptStrings = true;
+        pass.Transform(root, opts);
+        var code = Write(root);
+        Assert.DoesNotContain("\"x\"", code);
+        Assert.Contains("__se_", code);
+    }
+
+    [Fact]
+    public void StringEncryptPass_ExtraAlgorithms_NoCrash()
+    {
+        var root = Parse("local s = \"hello world this is a test string for encryption\"");
+        var pass = new StringEncryptPass();
+        var opts = AllDisabled();
+        opts.EncryptStrings = true;
+
+        for (var i = 0; i < 20; i++)
+        {
+            var ex = Record.Exception(() => pass.Transform(root, opts));
+            Assert.Null(ex);
+        }
+    }
+
+    // ── Fuzz Testing ─────────────────────────────────────────
+
+    public static IEnumerable<object[]> GetFuzzInputs()
+    {
+        var inputs = new[]
+        {
+            "local x = 1",
+            "x = 1",
+            "function f() end",
+            "local function f() end",
+            "if true then end",
+            "while true do break end",
+            "repeat until true",
+            "do end",
+            "return nil",
+            "local x = 1; if x then print(1) end",
+            "local x = (1+2)*3",
+            "for i=1,10 do end",
+            "for k,v in pairs({}) do end",
+            "print(1,2,3)",
+            "local a,b=1,2",
+            "local t={}",
+            "local t={1,2,3}",
+            "local t={a=1,b=2}",
+            "x = a.b.c",
+            "x = a[b]",
+            "x = #t",
+            "x = -t",
+            "x = not true",
+            "x = 1+2", "x = 1-2", "x = 1*2", "x = 1/2", "x = 1%2", "x = 1^2",
+            "x = 1==2", "x = 1~=2", "x = 1<2", "x = 1>2", "x = 1<=2", "x = 1>=2",
+            "x = a and b",
+            "x = a or b",
+            "x = \"a\"..\"b\"",
+            "function f(...) end",
+            "local function f(a,b,...) end",
+            "a.f()",
+            "a:f()",
+            "a.f(1,2,3)",
+            "x = {[1]=2,[3]=4}",
+            "x = {{}}",
+            "f()()",
+            "f(g(h()))",
+            "x = {}; x[1] = 2",
+            "for i=1,10 do for j=1,5 do print(i,j) end end",
+            "if true then print(1) else print(2) end",
+            "local x; local y",
+            "x = nil",
+            "print(\"hello \" .. \"world\")",
+            "local function foo() return 1,2,3 end",
+            "local t = {}; table.insert(t, 1)",
+            "local s = \"\"; for i=1,10 do s = s .. tostring(i) end",
+        };
+        foreach (var input in inputs)
+            yield return new object[] { input };
+    }
+
+    [Theory]
+    [MemberData(nameof(GetFuzzInputs))]
+    public void Fuzz_FullPipeline_NoCrash(string src)
+    {
+        var processor = new LunarGuardProcessor();
+        var opts = new ObfuscationOptions
+        {
+            RenameVariables = true,
+            EncryptStrings = true,
+            EncodeNumbers = true,
+            InjectDeadCode = true,
+            DeadCodeBlocks = 3,
+            ObfuscateControlFlow = true,
+            SplitExpressions = true,
+            AntiDebug = true,
+            Virtualize = true
+        };
+        var ex = Record.Exception(() => processor.Process(src, opts));
+        Assert.Null(ex);
+    }
+
+    [Theory]
+    [MemberData(nameof(GetFuzzInputs))]
+    public void Fuzz_FullPipelineWithoutVM_NoCrash(string src)
+    {
+        var processor = new LunarGuardProcessor();
+        var opts = new ObfuscationOptions
+        {
+            RenameVariables = true,
+            EncryptStrings = true,
+            EncodeNumbers = true,
+            InjectDeadCode = true,
+            DeadCodeBlocks = 3,
+            ObfuscateControlFlow = true,
+            SplitExpressions = true,
+            AntiDebug = true,
+            Virtualize = false
+        };
+        var ex = Record.Exception(() => processor.Process(src, opts));
+        Assert.Null(ex);
+        var result = processor.Process(src, opts);
+        Assert.NotNull(result);
+    }
+
+    [Theory]
+    [MemberData(nameof(GetFuzzInputs))]
+    public void Fuzz_ParseWrite_Roundtrip(string src)
+    {
+        var root = Parse(src);
+        var code = Write(root);
+        Assert.NotEmpty(code);
+        var reLexer = new Lexer(code);
+        var reTokens = reLexer.Tokenize();
+        var reParser = new Parser(reTokens);
+        var ex = Record.Exception(() => reParser.Parse());
+        Assert.Null(ex);
+    }
 }

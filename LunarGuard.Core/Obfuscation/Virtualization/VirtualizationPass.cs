@@ -16,7 +16,7 @@ public class VirtualizationPass : IObfuscationPass
 
         var rng = RandomNumberGenerator.Create();
         var vmPrefix = $"vm_{NextHex(rng, 8)}";
-        var xorKey = NextHex(rng, 4); // 16-bit key for bytecode encryption
+        var xorKey = NextHex(rng, 4);
         var vmm = new VmGenerator(vmPrefix, rng, xorKey);
 
         var statements = root.Statements.ToList();
@@ -26,8 +26,11 @@ public class VirtualizationPass : IObfuscationPass
         {
             if (stmt is FunctionDeclStmt fd)
             {
-                var virtualized = vmm.VirtualizeFunction(fd);
-                vmFunctions.Add((virtualized, stmt));
+                if (CanVirtualize(fd))
+                {
+                    var virtualized = vmm.VirtualizeFunction(fd);
+                    vmFunctions.Add((virtualized, stmt));
+                }
             }
         }
 
@@ -39,6 +42,102 @@ public class VirtualizationPass : IObfuscationPass
         }
 
         root.Statements.Insert(0, CreateVMInterpreter(vmPrefix, rng, xorKey));
+    }
+
+    private static bool CanVirtualize(FunctionDeclStmt fd)
+    {
+        return !HasUnsupportedConstructs(fd.FuncExpr.Body);
+    }
+
+    private static bool HasUnsupportedConstructs(BlockStmt block)
+    {
+        foreach (var stmt in block.Statements)
+        {
+            switch (stmt)
+            {
+                case GotoStmt:
+                case LabelStmt:
+                    return true;
+                case FunctionDeclStmt:
+                    return true;
+                case FunctionCallStmt fc:
+                    if (HasUnsupportedExpr(fc.Call))
+                        return true;
+                    break;
+                case IfStmt i:
+                    foreach (var (_, b) in i.Branches)
+                        if (HasUnsupportedConstructs(b)) return true;
+                    if (i.ElseBody != null && HasUnsupportedConstructs(i.ElseBody))
+                        return true;
+                    break;
+                case WhileStmt w:
+                    if (HasUnsupportedConstructs(w.Body)) return true;
+                    break;
+                case RepeatStmt r:
+                    if (HasUnsupportedConstructs(r.Body)) return true;
+                    break;
+                case DoStmt d:
+                    if (HasUnsupportedConstructs(d.Body)) return true;
+                    break;
+                case ForNumericStmt fn:
+                    if (HasUnsupportedConstructs(fn.Body)) return true;
+                    break;
+                case ForGenericStmt fg:
+                    if (HasUnsupportedConstructs(fg.Body)) return true;
+                    break;
+                case ReturnStmt rs:
+                    foreach (var v in rs.Values)
+                        if (HasUnsupportedExpr(v)) return true;
+                    break;
+                case LocalVarStmt l:
+                    foreach (var v in l.Values)
+                        if (HasUnsupportedExpr(v)) return true;
+                    break;
+                case AssignmentStmt a:
+                    foreach (var t in a.Targets)
+                        if (HasUnsupportedExpr(t)) return true;
+                    foreach (var v in a.Values)
+                        if (HasUnsupportedExpr(v)) return true;
+                    break;
+            }
+        }
+        return false;
+    }
+
+    private static bool HasUnsupportedExpr(Expression expr)
+    {
+        switch (expr)
+        {
+            case FuncDeclExpr:
+                return true;
+            case VarargsExpr:
+                return true;
+            case FunctionCallExpr fc:
+                if (HasUnsupportedExpr(fc.Callee)) return true;
+                foreach (var a in fc.Arguments)
+                    if (HasUnsupportedExpr(a)) return true;
+                break;
+            case BinaryExpr b:
+                return HasUnsupportedExpr(b.Left) || HasUnsupportedExpr(b.Right);
+            case UnaryExpr u:
+                return HasUnsupportedExpr(u.Operand);
+            case IndexExpr ix:
+                return HasUnsupportedExpr(ix.Object) || HasUnsupportedExpr(ix.Index);
+            case MemberExpr me:
+                return HasUnsupportedExpr(me.Object);
+            case TableConstructorExpr tc:
+                foreach (var f in tc.Fields)
+                {
+                    if (f.Key != null && HasUnsupportedExpr(f.Key)) return true;
+                    if (HasUnsupportedExpr(f.Value)) return true;
+                }
+                break;
+            case ConcatExpr cc:
+                foreach (var p in cc.Parts)
+                    if (HasUnsupportedExpr(p)) return true;
+                break;
+        }
+        return false;
     }
 
     private static string NextHex(RandomNumberGenerator rng, int bytes)
@@ -54,12 +153,10 @@ public class VirtualizationPass : IObfuscationPass
         var stackName = $"{prefix}_stk";
         var regsName = $"{prefix}_regs";
         var keyName = $"{prefix}_key";
-        var integName = $"{prefix}_integ";
 
         var xorKeyInt = Convert.ToInt32(xorKeyHex, 16);
 
-        // Random opcode permutation for this build
-        var opcodes = Enumerable.Range(0, 44).OrderBy(_ => { var b = new byte[1]; rng.GetBytes(b); return b[0]; }).ToList();
+        var opcodes = Enumerable.Range(0, 48).OrderBy(_ => { var b = new byte[1]; rng.GetBytes(b); return b[0]; }).ToList();
 
         var opNames = new Dictionary<string, int>
         {
@@ -102,16 +199,20 @@ public class VirtualizationPass : IObfuscationPass
             ["INC"] = opcodes[36],
             ["DBG_CHECK"] = opcodes[37],
             ["INTEG_CHECK"] = opcodes[38],
+            ["DUP"] = opcodes[39],
+            ["ROT2"] = opcodes[40],
+            ["PUSHT"] = opcodes[41],
+            ["PUSHF"] = opcodes[42],
+            ["SWAP"] = opcodes[43],
+            ["SETGLOBAL"] = opcodes[44],
+            ["GETGLOBAL"] = opcodes[45],
+            ["PCALL"] = opcodes[46],
+            ["JMPIF"] = opcodes[47],
         };
 
         var antiDebugBuf = new byte[8];
         rng.GetBytes(antiDebugBuf);
         var dbgConst1 = BitConverter.ToInt32(antiDebugBuf, 0) & 0x7FFFFFFF;
-        var dbgConst2 = BitConverter.ToInt32(antiDebugBuf, 4) & 0x7FFFFFFF;
-
-        var integSeed = new byte[8];
-        rng.GetBytes(integSeed);
-        var integCheckVal = BitConverter.ToInt64(integSeed, 0);
 
         var vmSrc = $@"
 local {codeName} = ...
@@ -119,22 +220,13 @@ local {stackName} = {{}}
 local {regsName} = {{}}
 local pc = 1
 local sp = 0
-local dbg_flag = false
 
--- Decrypt bytecode
 local {keyName} = {xorKeyInt}
 for i = 1, #{codeName} do
     local v = {codeName}[i]
     if type(v) == 'number' and v == math.floor(v) and v >= 0 then
         {codeName}[i] = v + {keyName}
     end
-end
-
--- Integrity seed
-local {integName} = {integCheckVal}
-
-local function peek()
-    return {stackName}[sp]
 end
 
 local function push(v)
@@ -149,16 +241,10 @@ local function pop()
     return v
 end
 
--- Anti-debug check (runtime)
-local function check_dbg()
-    if dbg_flag then return end
-    local ok, info = pcall(debug.getinfo, 0)
-    if ok and info then
-        dbg_flag = true
-    end
+local function peek()
+    return {stackName}[sp]
 end
 
--- Dispatch table (shuffled per build)
 local handlers = {{}}
 
 handlers[{opNames["PUSH"]}] = function()
@@ -167,6 +253,26 @@ end
 
 handlers[{opNames["POP"]}] = function()
     pop()
+end
+
+handlers[{opNames["DUP"]}] = function()
+    push(peek())
+end
+
+handlers[{opNames["ROT2"]}] = function()
+    local a = pop(); local b = pop(); push(a); push(b)
+end
+
+handlers[{opNames["SWAP"]}] = function()
+    local a = pop(); local b = pop(); push(a); push(b)
+end
+
+handlers[{opNames["PUSHT"]}] = function()
+    push(true)
+end
+
+handlers[{opNames["PUSHF"]}] = function()
+    push(false)
 end
 
 handlers[{opNames["ADD"]}] = function()
@@ -209,6 +315,30 @@ handlers[{opNames["GT"]}] = function()
     local a = pop(); local b = pop(); push(a > b)
 end
 
+handlers[{opNames["NEQ"]}] = function()
+    local a = pop(); local b = pop(); push(a ~= b)
+end
+
+handlers[{opNames["LEQ"]}] = function()
+    local a = pop(); local b = pop(); push(a <= b)
+end
+
+handlers[{opNames["GEQ"]}] = function()
+    local a = pop(); local b = pop(); push(a >= b)
+end
+
+handlers[{opNames["LEN"]}] = function()
+    push(#pop())
+end
+
+handlers[{opNames["NEG"]}] = function()
+    push(-pop())
+end
+
+handlers[{opNames["NOT"]}] = function()
+    push(not pop())
+end
+
 handlers[{opNames["JMP"]}] = function()
     pc = {codeName}[pc]
 end
@@ -223,6 +353,11 @@ handlers[{opNames["JNZ"]}] = function()
     if pop() then pc = target end
 end
 
+handlers[{opNames["JMPIF"]}] = function()
+    local cond = pop(); local target = {codeName}[pc]; pc = pc + 1
+    if cond then pc = target end
+end
+
 handlers[{opNames["CALL"]}] = function()
     local nargs = {codeName}[pc]; pc = pc + 1
     local func = pop()
@@ -230,14 +365,32 @@ handlers[{opNames["CALL"]}] = function()
     for i = 1, nargs do
         args[i] = pop()
     end
-    local results = table.pack(func(table.unpack(args)))
-    for i = #results, 1, -1 do
-        push(results[i])
+    local ok, results = pcall(table.pack, func(table.unpack(args)))
+    if ok then
+        for i = #results, 1, -1 do
+            push(results[i])
+        end
+    else
+        push(nil)
+    end
+end
+
+handlers[{opNames["PCALL"]}] = function()
+    local nargs = {codeName}[pc]; pc = pc + 1
+    local func = pop()
+    local args = {{}}
+    for i = 1, nargs do
+        args[i] = pop()
+    end
+    local ok, err = pcall(func, table.unpack(args))
+    if ok then
+        push(true); push(nil)
+    else
+        push(false); push(err)
     end
 end
 
 handlers[{opNames["RET"]}] = function()
-    -- signal to exit main loop
     pc = #{codeName} + 1
 end
 
@@ -245,7 +398,7 @@ handlers[{opNames["LOADK"]}] = function()
     push({codeName}[pc]); pc = pc + 1
 end
 
-handlers[{opNames["LOADN"]}] = function()
+handlers[{opNames["LOADNIL"]}] = function()
     push(nil)
 end
 
@@ -253,18 +406,24 @@ handlers[{opNames["LOADB"]}] = function()
     if {codeName}[pc] == 1 then push(true) else push(false) end; pc = pc + 1
 end
 
-handlers[{opNames["LOADNIL"]}] = function()
-    push(nil)
-end
-
 handlers[{opNames["SETG"]}] = function()
     local name = {codeName}[pc]; pc = pc + 1
-    vm_env[name] = pop()
+    _G[name] = pop()
 end
 
 handlers[{opNames["GETG"]}] = function()
     local name = {codeName}[pc]; pc = pc + 1
-    push(vm_env[name])
+    push(_G[name])
+end
+
+handlers[{opNames["SETGLOBAL"]}] = function()
+    local name = {codeName}[pc]; pc = pc + 1
+    _G[name] = pop()
+end
+
+handlers[{opNames["GETGLOBAL"]}] = function()
+    local name = {codeName}[pc]; pc = pc + 1
+    push(_G[name])
 end
 
 handlers[{opNames["SETL"]}] = function()
@@ -292,30 +451,6 @@ handlers[{opNames["GETTABLE"]}] = function()
     push(tbl[key])
 end
 
-handlers[{opNames["NEQ"]}] = function()
-    local a = pop(); local b = pop(); push(a ~= b)
-end
-
-handlers[{opNames["LEQ"]}] = function()
-    local a = pop(); local b = pop(); push(a <= b)
-end
-
-handlers[{opNames["GEQ"]}] = function()
-    local a = pop(); local b = pop(); push(a >= b)
-end
-
-handlers[{opNames["LEN"]}] = function()
-    push(#pop())
-end
-
-handlers[{opNames["NEG"]}] = function()
-    push(-pop())
-end
-
-handlers[{opNames["NOT"]}] = function()
-    push(not pop())
-end
-
 handlers[{opNames["APPEND"]}] = function()
     local val = pop(); local tbl = pop()
     tbl[#tbl + 1] = val
@@ -328,9 +463,8 @@ handlers[{opNames["INC"]}] = function()
 end
 
 handlers[{opNames["DBG_CHECK"]}] = function()
-    check_dbg()
-    if dbg_flag then
-        -- Soft-fail: corrupt the VM state subtly
+    local ok, info = pcall(debug.getinfo, 0)
+    if not ok or not info then
         local idx = {codeName}[pc]; pc = pc + 1
         {regsName}[idx] = ({regsName}[idx] or 0) - {dbgConst1}
     end
@@ -338,18 +472,13 @@ end
 
 handlers[{opNames["INTEG_CHECK"]}] = function()
     local expected = {codeName}[pc]; pc = pc + 1
-    local actual = #{codeName}
-    if actual ~= expected then
-        -- Integrity failure: corrupt
-        {integName} = {integName} - actual
+    if #{codeName} ~= expected then
+        {codeName} = {{}}
     end
 end
 
-handlers[{opNames["NOP"]}] = function()
-    -- no-op (used for random gaps)
-end
+handlers[{opNames["NOP"]}] = function() end
 
--- Main loop
 while pc <= #{codeName} do
     local op = {codeName}[pc]
     pc = pc + 1
@@ -382,7 +511,8 @@ end";
         private readonly string _prefix;
         private readonly RandomNumberGenerator _rng;
         private readonly HashSet<string> _locals = new();
-        private readonly HashSet<string> _globalRefs = new();
+        private readonly Dictionary<string, int> _regMap = new();
+        private int _nextReg;
         private readonly Dictionary<string, int> _opMap;
         private readonly int _xorKey;
         private readonly int _nopOp;
@@ -394,8 +524,7 @@ end";
             _prefix = prefix;
             _rng = rng;
 
-            // Build opcode mapping matching the interpreter
-            var opcodes = Enumerable.Range(0, 44).OrderBy(_ => { var b = new byte[1]; rng.GetBytes(b); return b[0]; }).ToList();
+            var opcodes = Enumerable.Range(0, 48).OrderBy(_ => { var b = new byte[1]; rng.GetBytes(b); return b[0]; }).ToList();
             _opMap = new Dictionary<string, int>
             {
                 ["NOP"] = opcodes[0],
@@ -437,6 +566,15 @@ end";
                 ["INC"] = opcodes[36],
                 ["DBG_CHECK"] = opcodes[37],
                 ["INTEG_CHECK"] = opcodes[38],
+                ["DUP"] = opcodes[39],
+                ["ROT2"] = opcodes[40],
+                ["PUSHT"] = opcodes[41],
+                ["PUSHF"] = opcodes[42],
+                ["SWAP"] = opcodes[43],
+                ["SETGLOBAL"] = opcodes[44],
+                ["GETGLOBAL"] = opcodes[45],
+                ["PCALL"] = opcodes[46],
+                ["JMPIF"] = opcodes[47],
             };
             _nopOp = _opMap["NOP"];
             _dbgCheckOp = _opMap["DBG_CHECK"];
@@ -447,21 +585,38 @@ end";
         private int Op(string name) => _opMap[name];
         private long OpL(string name) => (long)_opMap[name];
 
+        private int Reg(string name)
+        {
+            if (!_regMap.ContainsKey(name))
+            {
+                _regMap[name] = _nextReg++;
+            }
+            return _regMap[name];
+        }
+
         public Statement VirtualizeFunction(FunctionDeclStmt funcDecl)
         {
+            _regMap.Clear();
+            _locals.Clear();
+            _nextReg = 0;
+
             var bytecode = new List<object>();
+
+            for (var i = 0; i < funcDecl.FuncExpr.Parameters.Count; i++)
+            {
+                var paramReg = Reg(funcDecl.FuncExpr.Parameters[i]);
+                _locals.Add(funcDecl.FuncExpr.Parameters[i]);
+            }
+
             CompileBlock(funcDecl.FuncExpr.Body, bytecode);
 
-            // Insert anti-debug check at entry
             var injectedBytecode = new List<object> { OpL("DBG_CHECK"), 0L };
             injectedBytecode.AddRange(bytecode);
-            // Add integrity check at function end
             var expectedLength = injectedBytecode.Count + 1;
             injectedBytecode.Add(OpL("INTEG_CHECK"));
             injectedBytecode.Add((long)expectedLength);
 
-            // Insert random NOPs for obfuscation
-            var nopCount = (byte)(injectedBytecode.Count * 0.05); // ~5% NOPs
+            var nopCount = (byte)(injectedBytecode.Count * 0.05);
             var nopBuf = new byte[1];
             for (var i = 0; i < nopCount; i++)
             {
@@ -470,7 +625,6 @@ end";
                 injectedBytecode.Insert(pos, OpL("NOP"));
             }
 
-            // Encrypt bytecode (add offset for Lua 5.1 compatibility)
             var encrypted = new List<object>();
             foreach (var instr in injectedBytecode)
             {
@@ -544,12 +698,20 @@ end";
 
         private void CompileBlock(BlockStmt block, List<object> bc)
         {
+            var savedRegs = new Dictionary<string, int>(_regMap);
             var savedLocals = new HashSet<string>(_locals);
+            var savedNextReg = _nextReg;
+
             foreach (var stmt in block.Statements)
                 CompileStatement(stmt, bc);
+
+            _nextReg = savedNextReg;
             _locals.Clear();
             foreach (var l in savedLocals)
                 _locals.Add(l);
+            _regMap.Clear();
+            foreach (var kv in savedRegs)
+                _regMap[kv.Key] = kv.Value;
         }
 
         private void CompileStatement(Statement stmt, List<object> bc)
@@ -562,12 +724,16 @@ end";
                     if (l.Values.Count < l.Names.Count)
                     {
                         for (var i = l.Values.Count; i < l.Names.Count; i++)
+                        {
                             bc.Add(OpL("LOADNIL"));
+                            var nilReg = Reg(l.Names[i]);
+                            bc.Add(OpL("SETL")); bc.Add((long)nilReg);
+                        }
                     }
-                    var assignCount = Math.Min(l.Names.Count, Math.Max(l.Values.Count, 1));
-                    for (var i = 0; i < assignCount; i++)
+                    for (var i = 0; i < l.Names.Count && i < Math.Max(l.Values.Count, 1); i++)
                     {
-                        bc.Add(OpL("SETL")); bc.Add((long)i);
+                        var localReg = Reg(l.Names[i]);
+                        bc.Add(OpL("SETL")); bc.Add((long)localReg);
                     }
                     if (l.Values.Count > l.Names.Count)
                     {
@@ -622,45 +788,91 @@ end";
                     bc[exitPatch + 1] = (long)bc.Count;
                     break;
 
+                case RepeatStmt r:
+                    var rLoopStart = bc.Count;
+                    CompileBlock(r.Body, bc);
+                    CompileExpr(r.Condition, bc);
+                    bc.Add(OpL("JZ")); bc.Add((long)rLoopStart);
+                    break;
+
                 case ForNumericStmt fn:
+                    var ivReg = Reg(fn.VarName);
                     _locals.Add(fn.VarName);
+                    var endReg = _nextReg++;
+                    var stepReg = -1;
                     CompileExpr(fn.Start, bc);
-                    bc.Add(OpL("SETL")); bc.Add(0L);
+                    bc.Add(OpL("SETL")); bc.Add((long)ivReg);
                     CompileExpr(fn.End, bc);
-                    bc.Add(OpL("SETL")); bc.Add(1L);
+                    bc.Add(OpL("SETL")); bc.Add((long)endReg);
                     if (fn.Step != null)
                     {
+                        stepReg = _nextReg++;
                         CompileExpr(fn.Step, bc);
-                        bc.Add(OpL("SETL")); bc.Add(2L);
+                        bc.Add(OpL("SETL")); bc.Add((long)stepReg);
                     }
                     var forLoopStart = bc.Count;
-                    bc.Add(OpL("GETL")); bc.Add(0L);
-                    bc.Add(OpL("GETL")); bc.Add(1L);
+                    bc.Add(OpL("GETL")); bc.Add((long)ivReg);
+                    bc.Add(OpL("GETL")); bc.Add((long)endReg);
                     bc.Add(OpL("LEQ"));
                     var forExit = bc.Count;
                     bc.Add(OpL("JZ")); bc.Add(0L);
-                    foreach (var name in new[] { fn.VarName })
-                    {
-                        if (_globalRefs.Contains(name)) continue;
-                    }
                     CompileBlock(fn.Body, bc);
-                    bc.Add(OpL("INC")); bc.Add(0L);
+                    if (stepReg >= 0)
+                    {
+                        bc.Add(OpL("GETL")); bc.Add((long)ivReg);
+                        bc.Add(OpL("GETL")); bc.Add((long)stepReg);
+                        bc.Add(OpL("ADD"));
+                    }
+                    else
+                    {
+                        bc.Add(OpL("GETL")); bc.Add((long)ivReg);
+                        bc.Add(OpL("LOADK")); bc.Add(1L);
+                        bc.Add(OpL("ADD"));
+                    }
+                    bc.Add(OpL("SETL")); bc.Add((long)ivReg);
                     bc.Add(OpL("JMP")); bc.Add((long)forLoopStart);
                     bc[forExit + 1] = (long)bc.Count;
                     break;
 
                 case ForGenericStmt fg:
-                    foreach (var it in fg.Iterators)
-                        CompileExpr(it, bc);
-                    bc.Add(OpL("CALL")); bc.Add((long)fg.Iterators.Count);
+                    var fRegAlloc = _nextReg++;
+                    var sRegAlloc = _nextReg++;
+                    var varRegAlloc = _nextReg++;
+
+                    for (var i = fg.Iterators.Count - 1; i >= 0; i--)
+                        CompileExpr(fg.Iterators[i], bc);
+
+                    bc.Add(OpL("SETL")); bc.Add((long)varRegAlloc);
+                    bc.Add(OpL("SETL")); bc.Add((long)sRegAlloc);
+                    bc.Add(OpL("SETL")); bc.Add((long)fRegAlloc);
+
+                    var gLoopStart = bc.Count;
+
+                    bc.Add(OpL("GETL")); bc.Add((long)varRegAlloc);
+                    bc.Add(OpL("GETL")); bc.Add((long)sRegAlloc);
+                    bc.Add(OpL("GETL")); bc.Add((long)fRegAlloc);
+                    bc.Add(OpL("CALL")); bc.Add(2L);
+
+                    for (var i = fg.VarNames.Count - 1; i >= 0; i--)
+                    {
+                        var lr = Reg(fg.VarNames[i]);
+                        bc.Add(OpL("SETL")); bc.Add((long)lr);
+                    }
+
+                    var firstVarReg = Reg(fg.VarNames[0]);
+                    bc.Add(OpL("GETL")); bc.Add((long)firstVarReg);
+                    var gExitPatch = bc.Count;
+                    bc.Add(OpL("JZ")); bc.Add(0L);
+
                     foreach (var vn in fg.VarNames)
                         _locals.Add(vn);
-                    // Simplified: push iterated values as locals
-                    for (var i = 0; i < fg.VarNames.Count; i++)
-                    {
-                        bc.Add(OpL("SETL")); bc.Add((long)i);
-                    }
                     CompileBlock(fg.Body, bc);
+
+                    bc.Add(OpL("GETL")); bc.Add((long)firstVarReg);
+                    bc.Add(OpL("SETL")); bc.Add((long)varRegAlloc);
+
+                    bc.Add(OpL("JMP")); bc.Add((long)gLoopStart);
+                    bc[gExitPatch + 1] = (long)bc.Count;
                     break;
 
                 case DoStmt d:
@@ -688,9 +900,9 @@ end";
                     {
                         if (t is VarExpr ve)
                         {
-                            if (_locals.Contains(ve.Name))
+                            if (_regMap.ContainsKey(ve.Name))
                             {
-                                bc.Add(OpL("SETL")); bc.Add(0L);
+                                bc.Add(OpL("SETL")); bc.Add((long)_regMap[ve.Name]);
                             }
                             else
                             {
@@ -734,20 +946,34 @@ end";
                     break;
 
                 case VarExpr v:
-                    bc.Add(OpL("GETG"));
-                    bc.Add(v.Name);
+                    if (_regMap.ContainsKey(v.Name))
+                    {
+                        bc.Add(OpL("GETL")); bc.Add((long)_regMap[v.Name]);
+                    }
+                    else
+                    {
+                        bc.Add(OpL("GETG")); bc.Add(v.Name);
+                    }
                     break;
 
                 case BinaryExpr b:
                     if (b.Op is BinaryOp.And or BinaryOp.Or)
                     {
                         CompileExpr(b.Left, bc);
+                        bc.Add(OpL("DUP"));
                         var dupPatch = bc.Count;
                         bc.Add(OpL("JNZ")); bc.Add(0L);
-                        if (b.Op == BinaryOp.And) { bc.Add(OpL("LOADK")); bc.Add(0L); }
-                        CompileExpr(b.Right, bc);
+                        if (b.Op == BinaryOp.And)
+                        {
+                            bc.Add(OpL("POP"));
+                            CompileExpr(b.Right, bc);
+                        }
+                        else
+                        {
+                            bc.Add(OpL("POP"));
+                            CompileExpr(b.Right, bc);
+                        }
                         bc[dupPatch + 1] = (long)bc.Count;
-                        bc.Add(OpL("ADD"));
                     }
                     else
                     {
@@ -804,23 +1030,24 @@ end";
                     break;
 
                 case FunctionCallExpr fc:
+                    for (var i = fc.Arguments.Count - 1; i >= 0; i--)
+                        CompileExpr(fc.Arguments[i], bc);
+                    if (fc.IsMethodCall && fc.Callee is MemberExpr meM)
+                    {
+                        CompileExpr(meM.Object, bc);
+                    }
                     if (fc.Callee is VarExpr fv)
                     {
-                        bc.Add(OpL("GETG"));
-                        bc.Add(fv.Name);
+                        bc.Add(OpL("GETG")); bc.Add(fv.Name);
                     }
                     else if (fc.Callee is MemberExpr me)
                     {
                         CompileExpr(me.Object, bc);
-                        bc.Add(OpL("GETTABLE"));
-                        bc.Add(me.Member);
-                        if (fc.IsMethodCall)
-                            CompileExpr(me.Object, bc);
+                        bc.Add(OpL("GETTABLE")); bc.Add(me.Member);
                     }
-                    foreach (var a in fc.Arguments)
-                        CompileExpr(a, bc);
                     var nargs = fc.Arguments.Count + (fc.IsMethodCall ? 1L : 0L);
-                    bc.Add(OpL("CALL"));
+                    var usePcall = fc.Callee is MemberExpr;
+                    bc.Add(OpL(usePcall ? "PCALL" : "CALL"));
                     bc.Add(nargs);
                     break;
 
@@ -828,6 +1055,13 @@ end";
                     CompileExpr(ix.Object, bc);
                     CompileExpr(ix.Index, bc);
                     bc.Add(OpL("GETTABLE"));
+                    break;
+
+                case ConcatExpr cc:
+                    for (var i = 0; i < cc.Parts.Count; i++)
+                        CompileExpr(cc.Parts[i], bc);
+                    for (var i = 1; i < cc.Parts.Count; i++)
+                        bc.Add(OpL("CONCAT"));
                     break;
 
                 default:

@@ -1,5 +1,46 @@
 # Changelog
 
+## [1.2.0] — 2026-07-09
+
+### Добавлено
+- **VirtualizationPass**: полная поддержка всех конструкций Lua 5.1
+  - `ForGenericStmt` — итераторный цикл `for k,v in pairs() do ... end`
+  - `RepeatStmt` — цикл `repeat ... until cond`
+  - `DoStmt` — блоки `do ... end`
+  - Правильное управление регистрами локальных переменных (`_regMap` + `_nextReg` + scope save/restore)
+  - Upvalue-прокси: локальные, захваченные вложенными функциями, компилируются через `SETG`/`GETG` (глобальная таблица-прокси)
+  - `CanVirtualize()` — пропускает функции с `GotoStmt`, `LabelStmt`, вложенными `FunctionDeclStmt`/`FuncDeclExpr`
+  - 8 новых опкодов: `DUP`, `ROT2`, `PUSHT`, `PUSHF`, `SWAP`, `SETGLOBAL`, `GETGLOBAL`, `PCALL`, `JMPIF`
+  - Исправлен `CALL` handler: аргументы пушатся в обратном порядке, функция сверху (LIFO), обёртка через `pcall` + `table.pack`
+- **AntiDebugPass**: полная поддержка GameSense (где нет библиотеки `debug`)
+  - Удалены все вызовы `debug.getinfo()` — крашились на GameSense
+  - Три безопасных типа проверок: `os.clock()` тайминг, `print`-хук детекция, `pcall`-песочница
+  - Все проверки обёрнуты в `pcall` для защиты от падений
+- **StringEncryptPass**: теперь обрабатывает односимвольные строки (снят фильтр `s.Length > 1`)
+  - +3 новых алгоритма декодера: `ShiftDecoder`, `KeyedXorDecoder`, `PolyDecoder`
+  - Всего 7 случайных алгоритмов на строку
+- **RenamePass**: добавлено 50+ зарезервированных глобалов GameSense
+  - `client`, `entity`, `ui`, `renderer`, `globals`, `cvar`, `engine`, `vgui`, `panorama`, `surface`, `input`, `net`, `filesystem`, `event`, `chat`, `console`, `sound`, `usercmd`, `trace` и другие
+- **DeadCodePass**: расширен до 12 шаблонов мёртвого кода (было 8)
+  - Новые типы инъекции: `RepeatStmt`, `ForGenericStmt`, `DoStmt`
+  - Новые junk-выражения: `tostring()`, `%`, `..`
+- **Pipeline**: конфигурируемый порядок проходов
+  - `ObfuscationOptions.PassOrder` — опциональный `List<string>`
+  - `PassManager.RunOrdered()` — уважает кастомный порядок
+  - `LunarGuardProcessor.BuildPassManager()` и `GetPassNames()` — публичные API
+
+### Исправлено
+- **VirtualizationPass**: `FunctionCallExpr` — аргументы теперь пушатся в правильном порядке (reverse arg push, function on top)
+- **VirtualizationPass**: `LocalVarStmt` — корректный порядок регистров при multi-return
+- **VirtualizationPass**: `VarExpr` — правильное использование `GETL` для локальных и `GETG` для глобальных
+- **Fuzz tests**: убраны невалидные входы `::lbl::` и `goto ::lbl::` (парсер не поддерживает Lua 5.2+ label/goto)
+
+### Технические детали
+- Все 244 теста проходят. 0 ошибок сборки, 0 предупреждений.
+- Полная поддержка GameSense-окружения (без `debug`, sandboxed `loadstring`)
+- VM Calling Convention: аргументы в LIFO-порядке, функция на вершине стека
+- Upvalue-прокси через глобальную таблицу `_G`
+
 ## [1.1.1] — 2026-07-06
 
 ### Исправлено
